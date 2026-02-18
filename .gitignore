@@ -1,3 +1,6 @@
 .env
 clients/*.yml
 !clients/registry.json
+dashboard/.next
+dashboard/node_modules
+dashboard/dist

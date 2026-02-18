@@ -51,6 +51,25 @@ services:
       retries: 5
     networks: [agentcenter]
 
+  # ── Admin Dashboard ─────────────────────────────────────────────
+  dashboard:
+    build: ./dashboard
+    restart: unless-stopped
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./clients/registry.json:/app/clients/registry.json
+      - ./ac:/app/ac:ro
+      - ./templates:/app/templates:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`admin.app.agentcenter.cloud`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.services.dashboard.loadbalancer.server.port=4000"
+    networks: [agentcenter]
+
   # ── Cron (shared, hits auto-sleep for all clients) ───────────────
   cron:
     image: alpine:3.20
