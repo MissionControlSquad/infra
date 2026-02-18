@@ -12,6 +12,7 @@ interface ClientDetail {
   database: string;
   createdAt: string;
   domains: string[];
+  version: string;
 }
 
 export default function ClientDetailPage({
@@ -27,6 +28,11 @@ export default function ClientDetailPage({
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [availableVersions, setAvailableVersions] = useState<string[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState("");
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgradeError, setUpgradeError] = useState("");
   const logsRef = useRef<HTMLPreElement>(null);
   const router = useRouter();
 
@@ -77,6 +83,48 @@ export default function ClientDetailPage({
     }
   }
 
+  async function openUpgradeModal() {
+    setShowUpgradeModal(true);
+    setUpgradeError("");
+    setSelectedVersion("");
+    try {
+      const r = await fetch("/api/versions");
+      const d = await r.json();
+      setAvailableVersions(d.versions || []);
+    } catch {
+      setAvailableVersions([]);
+    }
+  }
+
+  async function handleUpgrade() {
+    if (!selectedVersion) return;
+    setUpgradeError("");
+    setUpgrading(true);
+    try {
+      const res = await fetch(`/api/clients/${slug}/upgrade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: selectedVersion }),
+      });
+      if (res.ok) {
+        setShowUpgradeModal(false);
+        if (client) setClient({ ...client, version: selectedVersion, status: "running" });
+        setTimeout(async () => {
+          const r = await fetch(`/api/clients/${slug}/logs`);
+          const d = await r.json();
+          setLogs(d.logs || "");
+        }, 2000);
+      } else {
+        const data = await res.json();
+        setUpgradeError(data.error || "Upgrade failed");
+      }
+    } catch {
+      setUpgradeError("Upgrade failed");
+    } finally {
+      setUpgrading(false);
+    }
+  }
+
   if (loading) return <p className="text-zinc-500">Loading...</p>;
   if (!client) return <p className="text-red-400">Client not found</p>;
 
@@ -88,6 +136,12 @@ export default function ClientDetailPage({
           <p className="text-zinc-500 font-mono text-sm">{client.slug}</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={openUpgradeModal}
+            className="px-4 py-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+          >
+            Upgrade
+          </button>
           <button
             onClick={handleRestart}
             className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm font-medium transition-colors cursor-pointer"
@@ -104,7 +158,7 @@ export default function ClientDetailPage({
       </div>
 
       {/* Info Card */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <InfoCard label="Status">
           <span
             className={`inline-flex items-center gap-1.5 ${
@@ -118,6 +172,9 @@ export default function ClientDetailPage({
             />
             {client.status}
           </span>
+        </InfoCard>
+        <InfoCard label="Version">
+          <span className="font-mono text-xs">{client.version}</span>
         </InfoCard>
         <InfoCard label="Memory">
           {client.stats?.memory || "N/A"}
@@ -170,6 +227,50 @@ export default function ClientDetailPage({
           {logs || "No logs available"}
         </pre>
       </div>
+
+      {/* Upgrade Modal */}
+      {showUpgradeModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-sm w-full mx-4 space-y-4">
+            <h3 className="text-lg font-semibold">Upgrade Client</h3>
+            <p className="text-zinc-400 text-sm">
+              Current version: <span className="font-mono">{client.version}</span>
+            </p>
+            {availableVersions.length > 0 ? (
+              <select
+                value={selectedVersion}
+                onChange={(e) => setSelectedVersion(e.target.value)}
+                className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              >
+                <option value="">Select version...</option>
+                {availableVersions.map((v) => (
+                  <option key={v} value={v}>
+                    {v} {v === client.version ? "(current)" : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-zinc-500 text-sm">No versions available from registry.</p>
+            )}
+            {upgradeError && <p className="text-red-400 text-sm">{upgradeError}</p>}
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => { setShowUpgradeModal(false); setUpgradeError(""); }}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpgrade}
+                disabled={!selectedVersion || upgrading}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+              >
+                {upgrading ? "Upgrading..." : "Upgrade"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (

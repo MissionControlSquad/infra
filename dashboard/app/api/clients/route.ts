@@ -18,6 +18,7 @@ export async function GET() {
     url: `https://${slug}.app.agentcenter.cloud`,
     createdAt: entry.createdAt,
     domains: entry.domains ?? [],
+    version: entry.version || "latest",
   }));
 
   return NextResponse.json(clients);
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { slug, name } = await req.json();
+    const { slug, name, version } = await req.json();
 
     if (!slug || !/^[a-z][a-z0-9-]*$/.test(slug)) {
       return NextResponse.json(
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const output = createClient(slug, name);
+    const output = createClient(slug, name, version);
     return NextResponse.json({ ok: true, output });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to create client";

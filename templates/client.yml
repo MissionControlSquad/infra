@@ -1,10 +1,10 @@
 # Template: per-client Docker Compose override
-# Placeholders: __SLUG__, __AUTH_SECRET__, __CRON_SECRET__
+# Placeholders: __SLUG__, __AUTH_SECRET__, __CRON_SECRET__, __IMAGE__
 # Shared env vars come from infra/.env
 
 services:
   app-__SLUG__:
-    image: agentcenter-app:latest
+    image: __IMAGE__
     restart: unless-stopped
     environment:
       - NODE_ENV=production

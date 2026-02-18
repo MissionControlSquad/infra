@@ -22,9 +22,10 @@ function run(command: string, timeout = 30_000): string {
   }
 }
 
-export function createClient(slug: string, name?: string): string {
+export function createClient(slug: string, name?: string, version?: string): string {
   const nameFlag = name ? ` --name "${name.replace(/"/g, '\\"')}"` : "";
-  return run(`${AC_PATH} create ${slug}${nameFlag}`, 60_000);
+  const versionFlag = version ? ` --version ${version}` : "";
+  return run(`${AC_PATH} create ${slug}${nameFlag}${versionFlag}`, 120_000);
 }
 
 export function deleteClient(slug: string): string {
@@ -61,6 +62,37 @@ export function getContainerStats(slug: string): { memory: string } | null {
     return { memory: mem };
   } catch {
     return null;
+  }
+}
+
+export function upgradeClient(slug: string, version: string): string {
+  return run(`${AC_PATH} upgrade ${slug} --version ${version}`, 120_000);
+}
+
+export function listAvailableVersions(): string[] {
+  const owner = process.env.GHCR_OWNER;
+  const token = process.env.GHCR_TOKEN;
+  if (!owner || !token) return [];
+
+  try {
+    const raw = run(
+      `curl -sf -H "Authorization: Bearer ${token}" ` +
+      `"https://api.github.com/orgs/${owner}/packages/container/agentcenter-app/versions?per_page=50" 2>/dev/null || ` +
+      `curl -sf -H "Authorization: Bearer ${token}" ` +
+      `"https://api.github.com/users/${owner}/packages/container/agentcenter-app/versions?per_page=50"`,
+      15_000
+    );
+    const data = JSON.parse(raw);
+    const tags: string[] = [];
+    for (const entry of data) {
+      const entryTags = entry.metadata?.container?.tags ?? [];
+      for (const tag of entryTags) {
+        if (tag && tag !== "latest") tags.push(tag);
+      }
+    }
+    return tags;
+  } catch {
+    return [];
   }
 }
 

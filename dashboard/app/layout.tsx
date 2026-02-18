@@ -23,6 +23,9 @@ export default function RootLayout({
               <a href="/" className="text-sm text-zinc-400 hover:text-zinc-100">
                 Clients
               </a>
+              <a href="/versions" className="text-sm text-zinc-400 hover:text-zinc-100">
+                Versions
+              </a>
               <button
                 id="logout-btn"
                 className="text-sm text-zinc-500 hover:text-red-400 cursor-pointer"

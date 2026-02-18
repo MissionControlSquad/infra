@@ -1,14 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 export default function CreatePage() {
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
+  const [version, setVersion] = useState("");
+  const [versions, setVersions] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    fetch("/api/versions")
+      .then((r) => r.json())
+      .then((d) => {
+        const v = d.versions || [];
+        setVersions(v);
+        if (v.length > 0) setVersion(v[0]);
+      })
+      .catch(() => {});
+  }, []);
 
   function slugify(value: string) {
     return value
@@ -33,7 +46,7 @@ export default function CreatePage() {
     const res = await fetch("/api/clients", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug: cleanSlug, name: name || cleanSlug }),
+      body: JSON.stringify({ slug: cleanSlug, name: name || cleanSlug, version: version || undefined }),
     });
 
     if (res.ok) {
@@ -76,6 +89,21 @@ export default function CreatePage() {
             className="w-full px-4 py-2.5 bg-zinc-900 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
+
+        {versions.length > 0 && (
+          <div>
+            <label className="block text-sm text-zinc-400 mb-1">Version</label>
+            <select
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+              className="w-full px-4 py-2.5 bg-zinc-900 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+            >
+              {versions.map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 

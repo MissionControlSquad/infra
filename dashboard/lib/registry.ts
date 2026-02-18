@@ -11,6 +11,7 @@ export interface ClientEntry {
   cronSecret: string;
   createdAt: string;
   domains?: string[];
+  version?: string;
 }
 
 export type Registry = Record<string, ClientEntry>;

@@ -58,6 +58,8 @@ services:
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       AC_HOST_DIR: /opt/agentcenter
+      GHCR_TOKEN: ${GHCR_TOKEN}
+      GHCR_OWNER: ${GHCR_OWNER}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./clients:/app/clients

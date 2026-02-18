@@ -26,6 +26,7 @@ export async function GET(
     database: `client_${slug}`,
     createdAt: client.createdAt,
     domains: client.domains ?? [],
+    version: client.version || "latest",
   });
 }
 
