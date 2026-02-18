@@ -1,0 +1,88 @@
+name: Deploy to VM
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image name
+        id: image
+        run: |
+          echo "name=${OWNER,,}/agentcenter-dashboard" >> "$GITHUB_OUTPUT"
+        env:
+          OWNER: ${{ github.repository_owner }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push dashboard image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./dashboard
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ vars.SSH_IP }} >> ~/.ssh/known_hosts
+
+      - name: Write .env to VM
+        run: |
+          ssh -i ~/.ssh/id_ed25519 ${{ vars.SSH_USERNAME }}@${{ vars.SSH_IP }} "cat > /opt/agentcenter/.env" << EOF
+          PG_PASS=${{ secrets.PG_PASS }}
+          ACME_EMAIL=${{ vars.ACME_EMAIL }}
+          R2_ACCOUNT_ID=${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID=${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY=${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME=${{ vars.R2_BUCKET_NAME }}
+          ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }}
+          GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
+          GHCR_USER=${{ vars.GHCR_USER }}
+          GHCR_OWNER=${{ vars.GHCR_OWNER }}
+          EOF
+
+      - name: Sync infra files to VM
+        run: |
+          rsync -avz --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '.env' \
+            --exclude '.env.example' \
+            --exclude 'clients/' \
+            --exclude 'dashboard/' \
+            --exclude 'node_modules/' \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            ./ ${{ vars.SSH_USERNAME }}@${{ vars.SSH_IP }}:/opt/agentcenter/
+
+      - name: Pull and restart dashboard on VM
+        run: |
+          ssh -i ~/.ssh/id_ed25519 ${{ vars.SSH_USERNAME }}@${{ vars.SSH_IP }} << 'EOF'
+            cd /opt/agentcenter
+            source .env
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            docker pull ghcr.io/${{ steps.image.outputs.name }}:latest
+            docker compose up -d dashboard
+          EOF
