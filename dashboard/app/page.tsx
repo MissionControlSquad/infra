@@ -18,8 +18,13 @@ export default function HomePage() {
 
   useEffect(() => {
     fetch("/api/clients")
-      .then((r) => r.json())
-      .then(setClients)
+      .then((r) => {
+        if (!r.ok) return [];
+        return r.json();
+      })
+      .then((data) => {
+        if (Array.isArray(data)) setClients(data);
+      })
       .finally(() => setLoading(false));
   }, []);
 

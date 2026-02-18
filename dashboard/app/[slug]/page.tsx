@@ -38,12 +38,18 @@ export default function ClientDetailPage({
 
   useEffect(() => {
     fetch(`/api/clients/${slug}`)
-      .then((r) => r.json())
-      .then(setClient)
+      .then((r) => {
+        if (!r.ok) return null;
+        return r.json();
+      })
+      .then((data) => { if (data) setClient(data); })
       .finally(() => setLoading(false));
 
     fetch(`/api/clients/${slug}/logs`)
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) return { logs: "" };
+        return r.json();
+      })
       .then((d) => setLogs(d.logs || ""));
   }, [slug]);
 
