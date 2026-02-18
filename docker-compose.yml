@@ -1,0 +1,68 @@
+networks:
+  agentcenter:
+    name: agentcenter
+
+volumes:
+  pg_data:
+  redis_data:
+  traefik_certs:
+
+services:
+  # ── Reverse Proxy ────────────────────────────────────────────────
+  traefik:
+    image: traefik:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - traefik_certs:/letsencrypt
+    networks: [agentcenter]
+
+  # ── Database (shared, one DB per client) ─────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${PG_PASS}
+      POSTGRES_USER: postgres
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [agentcenter]
+
+  # ── Redis (shared pubsub for real-time subscriptions) ────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [agentcenter]
+
+  # ── Cron (shared, hits auto-sleep for all clients) ───────────────
+  cron:
+    image: alpine:3.20
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        apk add --no-cache curl jq
+        echo "*/3 * * * * /scripts/cron-all.sh" | crontab -
+        crond -f -l 2
+    volumes:
+      - ./scripts/cron-all.sh:/scripts/cron-all.sh:ro
+      - ./clients/registry.json:/clients/registry.json:ro
+    networks: [agentcenter]

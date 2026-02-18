@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+INFRA_DIR="$(cd "$(dirname "$0")" && pwd)"
+CLIENTS_DIR="$INFRA_DIR/clients"
+REGISTRY="$CLIENTS_DIR/registry.json"
+TEMPLATE="$INFRA_DIR/templates/client.yml"
+
+# Ensure registry exists
+[ -f "$REGISTRY" ] || echo '{}' > "$REGISTRY"
+
+# Load shared env
+if [ -f "$INFRA_DIR/.env" ]; then
+  set -a; source "$INFRA_DIR/.env"; set +a
+fi
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+red()   { printf "\033[0;31m%s\033[0m\n" "$*"; }
+green() { printf "\033[0;32m%s\033[0m\n" "$*"; }
+bold()  { printf "\033[1m%s\033[0m\n" "$*"; }
+
+die() { red "Error: $*" >&2; exit 1; }
+
+require_slug() {
+  [ -n "${1:-}" ] || die "Usage: $0 $COMMAND <slug>"
+  [[ "$1" =~ ^[a-z][a-z0-9-]*$ ]] || die "Slug must be lowercase alphanumeric with hyphens (e.g. acme, my-client)"
+  echo "$1"
+}
+
+compose() {
+  local args=("-f" "$INFRA_DIR/docker-compose.yml")
+  for f in "$CLIENTS_DIR"/*.yml; do
+    [ -f "$f" ] && args+=("-f" "$f")
+  done
+  docker compose "${args[@]}" "$@"
+}
+
+compose_client() {
+  local slug="$1"; shift
+  docker compose -f "$INFRA_DIR/docker-compose.yml" -f "$CLIENTS_DIR/$slug.yml" "$@"
+}
+
+# ── Commands ─────────────────────────────────────────────────────────
+
+cmd_create() {
+  local slug name
+  slug=$(require_slug "${1:-}")
+  shift
+  name="$slug"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      *) die "Unknown option: $1" ;;
+    esac
+  done
+
+  [ -f "$CLIENTS_DIR/$slug.yml" ] && die "Client '$slug' already exists"
+  [ -n "${PG_PASS:-}" ] || die "PG_PASS not set. Create infra/.env from .env.example"
+
+  bold "Creating client: $slug"
+
+  # 1. Create database
+  echo "  Creating database client_$slug..."
+  docker compose -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
+    psql -U postgres -c "CREATE DATABASE client_$slug;" 2>/dev/null || true
+
+  # 2. Generate secrets
+  local auth_secret cron_secret
+  auth_secret=$(openssl rand -hex 32)
+  cron_secret=$(openssl rand -hex 32)
+
+  # 3. Generate compose file from template
+  echo "  Generating compose file..."
+  sed -e "s/__SLUG__/$slug/g" \
+      -e "s/__AUTH_SECRET__/$auth_secret/g" \
+      -e "s/__CRON_SECRET__/$cron_secret/g" \
+      "$TEMPLATE" > "$CLIENTS_DIR/$slug.yml"
+
+  # 4. Update registry
+  local tmp
+  tmp=$(mktemp)
+  jq --arg slug "$slug" \
+     --arg name "$name" \
+     --arg auth "$auth_secret" \
+     --arg cron "$cron_secret" \
+     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     '.[$slug] = {name: $name, authSecret: $auth, cronSecret: $cron, createdAt: $date, domains: []}' \
+     "$REGISTRY" > "$tmp" && mv "$tmp" "$REGISTRY"
+
+  # 5. Start the container
+  echo "  Starting container..."
+  compose_client "$slug" up -d "app-$slug"
+
+  green "Client '$slug' created!"
+  echo "  URL: https://$slug.app.agentcenter.cloud"
+  echo "  DB:  client_$slug"
+}
+
+cmd_delete() {
+  local slug confirm=false
+  slug=$(require_slug "${1:-}")
+  shift
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --confirm) confirm=true; shift ;;
+      *) die "Unknown option: $1" ;;
+    esac
+  done
+
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+
+  if [ "$confirm" != true ]; then
+    die "This will delete the database and all data. Pass --confirm to proceed."
+  fi
+
+  bold "Deleting client: $slug"
+
+  # 1. Stop container
+  echo "  Stopping container..."
+  compose_client "$slug" down --remove-orphans 2>/dev/null || true
+
+  # 2. Drop database
+  echo "  Dropping database client_$slug..."
+  docker compose -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
+    psql -U postgres -c "DROP DATABASE IF EXISTS client_$slug;" 2>/dev/null || true
+
+  # 3. Remove compose file
+  rm -f "$CLIENTS_DIR/$slug.yml"
+
+  # 4. Remove from registry
+  local tmp
+  tmp=$(mktemp)
+  jq --arg slug "$slug" 'del(.[$slug])' "$REGISTRY" > "$tmp" && mv "$tmp" "$REGISTRY"
+
+  green "Client '$slug' deleted."
+}
+
+cmd_list() {
+  bold "Clients:"
+  if [ "$(jq 'length' "$REGISTRY")" -eq 0 ]; then
+    echo "  (none)"
+    return
+  fi
+
+  printf "  %-20s %-25s %-10s %s\n" "SLUG" "NAME" "STATUS" "CREATED"
+  printf "  %-20s %-25s %-10s %s\n" "----" "----" "------" "-------"
+
+  for slug in $(jq -r 'keys[]' "$REGISTRY"); do
+    local name created status
+    name=$(jq -r ".\"$slug\".name" "$REGISTRY")
+    created=$(jq -r ".\"$slug\".createdAt" "$REGISTRY")
+    status=$(docker inspect --format='{{.State.Status}}' "$(docker ps -aq --filter "name=app-$slug" | head -1)" 2>/dev/null || echo "stopped")
+    printf "  %-20s %-25s %-10s %s\n" "$slug" "$name" "$status" "$created"
+  done
+}
+
+cmd_logs() {
+  local slug
+  slug=$(require_slug "${1:-}")
+  compose_client "$slug" logs -f "app-$slug"
+}
+
+cmd_restart() {
+  local slug
+  slug=$(require_slug "${1:-}")
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+  bold "Restarting $slug..."
+  compose_client "$slug" restart "app-$slug"
+  green "Done."
+}
+
+cmd_add_domain() {
+  local slug domain
+  slug=$(require_slug "${1:-}")
+  domain="${2:-}"
+  [ -n "$domain" ] || die "Usage: $0 add-domain <slug> <domain>"
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+
+  bold "Adding domain $domain to $slug..."
+
+  # Add Traefik labels for custom domain
+  local router_name
+  router_name=$(echo "$domain" | tr '.' '-')
+
+  cat >> "$CLIENTS_DIR/$slug.yml" <<EOF
+    # Custom domain: $domain
+      - traefik.http.routers.${router_name}.rule=Host(\`${domain}\`)
+      - traefik.http.routers.${router_name}.entrypoints=websecure
+      - traefik.http.routers.${router_name}.tls.certresolver=letsencrypt
+      - traefik.http.services.${router_name}.loadbalancer.server.port=3000
+EOF
+
+  # Update registry
+  local tmp
+  tmp=$(mktemp)
+  jq --arg slug "$slug" --arg domain "$domain" \
+     '.[$slug].domains += [$domain]' "$REGISTRY" > "$tmp" && mv "$tmp" "$REGISTRY"
+
+  # Restart to pick up new labels
+  compose_client "$slug" up -d "app-$slug"
+  green "Domain $domain added. Make sure DNS points to this server."
+}
+
+cmd_update() {
+  local target="${1:---all}"
+
+  bold "Building latest image..."
+  docker build -t agentcenter-app:latest "$INFRA_DIR/../app"
+
+  if [ "$target" = "--all" ]; then
+    bold "Restarting all clients..."
+    for slug in $(jq -r 'keys[]' "$REGISTRY"); do
+      echo "  Restarting $slug..."
+      compose_client "$slug" up -d "app-$slug"
+    done
+  else
+    local slug
+    slug=$(require_slug "$target")
+    [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+    echo "  Restarting $slug..."
+    compose_client "$slug" up -d "app-$slug"
+  fi
+
+  green "Update complete."
+}
+
+cmd_status() {
+  bold "System Status:"
+  echo ""
+
+  echo "  Containers:"
+  docker ps --format "  {{.Names}}\t{{.Status}}\t{{.Ports}}" --filter "network=agentcenter" 2>/dev/null || echo "  (none running)"
+  echo ""
+
+  echo "  Memory Usage:"
+  docker stats --no-stream --format "  {{.Name}}\t{{.MemUsage}}" --filter "network=agentcenter" 2>/dev/null || true
+  echo ""
+
+  echo "  Clients: $(jq 'length' "$REGISTRY")"
+  echo "  Disk (PG volume):"
+  docker system df -v 2>/dev/null | grep pg_data || echo "  (not found)"
+}
+
+cmd_help() {
+  cat <<'EOF'
+AgentCenter.Cloud — Per-Client Deployment CLI
+
+Usage: ./ac <command> [args]
+
+Commands:
+  create <slug> [--name "Name"]   Provision a new client
+  delete <slug> --confirm         Remove a client and its database
+  list                            List all clients and their status
+  logs <slug>                     Tail logs for a client
+  restart <slug>                  Restart a client container
+  add-domain <slug> <domain>      Add a custom domain to a client
+  update [slug|--all]             Rebuild image and restart clients
+  status                          Show system resource usage
+  help                            Show this help message
+
+Examples:
+  ./ac create acme --name "Acme Corp"
+  ./ac list
+  ./ac logs acme
+  ./ac update --all
+  ./ac add-domain acme app.acmecorp.com
+  ./ac delete acme --confirm
+EOF
+}
+
+# ── Main ─────────────────────────────────────────────────────────────
+
+COMMAND="${1:-help}"
+shift || true
+
+case "$COMMAND" in
+  create)     cmd_create "$@" ;;
+  delete)     cmd_delete "$@" ;;
+  list)       cmd_list ;;
+  logs)       cmd_logs "$@" ;;
+  restart)    cmd_restart "$@" ;;
+  add-domain) cmd_add_domain "$@" ;;
+  update)     cmd_update "$@" ;;
+  status)     cmd_status ;;
+  help|--help|-h) cmd_help ;;
+  *) die "Unknown command: $COMMAND. Run './ac help' for usage." ;;
+esac
