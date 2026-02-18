@@ -11,9 +11,26 @@ interface Client {
   createdAt: string;
 }
 
+interface Container {
+  name: string;
+  status: string;
+  image: string;
+}
+
+interface SystemStats {
+  memoryUsed: string;
+  memoryTotal: string;
+  diskUsed: string;
+  diskTotal: string;
+  containerCount: number;
+  containers: Container[];
+}
+
 export default function HomePage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<SystemStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
@@ -26,6 +43,16 @@ export default function HomePage() {
         if (Array.isArray(data)) setClients(data);
       })
       .finally(() => setLoading(false));
+
+    fetch("/api/status")
+      .then((r) => {
+        if (!r.ok) return null;
+        return r.json();
+      })
+      .then((data) => {
+        if (data && !data.error) setStats(data);
+      })
+      .finally(() => setStatsLoading(false));
   }, []);
 
   async function handleDelete(slug: string) {
@@ -59,6 +86,67 @@ export default function HomePage() {
 
   return (
     <div>
+      {/* System Info */}
+      <div className="mb-8">
+        <h2 className="text-lg font-semibold mb-4">System</h2>
+
+        {statsLoading ? (
+          <p className="text-zinc-500">Loading...</p>
+        ) : (
+          <>
+            {/* Summary cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+              <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                <p className="text-xs text-zinc-400 uppercase tracking-wider mb-1">Memory</p>
+                <p className="text-xl font-semibold">
+                  {stats ? `${stats.memoryUsed} / ${stats.memoryTotal}` : "N/A"}
+                </p>
+              </div>
+              <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                <p className="text-xs text-zinc-400 uppercase tracking-wider mb-1">Disk</p>
+                <p className="text-xl font-semibold">
+                  {stats ? `${stats.diskUsed} / ${stats.diskTotal}` : "N/A"}
+                </p>
+              </div>
+              <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                <p className="text-xs text-zinc-400 uppercase tracking-wider mb-1">Containers</p>
+                <p className="text-xl font-semibold">
+                  {stats ? stats.containerCount : "N/A"}
+                </p>
+              </div>
+            </div>
+
+            {/* Containers table */}
+            {stats && stats.containers.length > 0 && (
+              <div className="overflow-x-auto rounded-lg border border-zinc-800 mb-2">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-zinc-800 bg-zinc-900/50 text-zinc-400 text-left">
+                      <th className="px-4 py-3 font-medium">Name</th>
+                      <th className="px-4 py-3 font-medium">Image</th>
+                      <th className="px-4 py-3 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.containers.map((c) => (
+                      <tr
+                        key={c.name}
+                        className="border-b border-zinc-800/50 hover:bg-zinc-900/30"
+                      >
+                        <td className="px-4 py-3 font-mono">{c.name}</td>
+                        <td className="px-4 py-3 text-zinc-400 font-mono text-xs">{c.image}</td>
+                        <td className="px-4 py-3 text-zinc-300">{c.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Clients */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Clients</h1>
         <a

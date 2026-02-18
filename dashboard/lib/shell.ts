@@ -124,6 +124,19 @@ export function getTableStats(slug: string): { table: string; count: number }[] 
   }
 }
 
+export function listContainers(): { name: string; status: string; image: string }[] {
+  try {
+    const raw = run("docker ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}'", 10_000);
+    if (!raw) return [];
+    return raw.split("\n").filter(Boolean).map((line) => {
+      const [name, status, image] = line.split("\t");
+      return { name: name || "", status: status || "", image: image || "" };
+    });
+  } catch {
+    return [];
+  }
+}
+
 export function getSystemStats(): {
   memoryUsed: string;
   memoryTotal: string;
