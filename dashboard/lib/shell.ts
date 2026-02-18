@@ -1,7 +1,11 @@
 import { execSync } from "child_process";
 import path from "path";
 
-const INFRA_DIR = path.resolve(process.cwd(), "..");
+// In Docker: cwd is /app, ac is at /app/ac, clients/ and templates/ mounted under /app
+// In dev: cwd is dashboard/, ac is at ../ac
+const INFRA_DIR = process.env.NODE_ENV === "production"
+  ? process.cwd()
+  : path.resolve(process.cwd(), "..");
 const AC_PATH = path.join(INFRA_DIR, "ac");
 
 function run(command: string, timeout = 30_000): string {
@@ -33,7 +37,7 @@ export function restartClient(slug: string): string {
 
 export function getContainerStatus(slug: string): "running" | "stopped" | "not found" {
   try {
-    const out = run(`docker inspect --format='{{.State.Status}}' ac-${slug} 2>/dev/null`);
+    const out = run(`docker inspect --format='{{.State.Status}}' agentcenter-app-${slug}-1 2>/dev/null`);
     return out === "running" ? "running" : "stopped";
   } catch {
     return "not found";
@@ -42,7 +46,7 @@ export function getContainerStatus(slug: string): "running" | "stopped" | "not f
 
 export function getContainerLogs(slug: string, lines = 100): string {
   try {
-    return run(`docker logs ac-${slug} --tail ${lines} 2>&1`, 10_000);
+    return run(`docker logs agentcenter-app-${slug}-1 --tail ${lines} 2>&1`, 10_000);
   } catch {
     return "No logs available";
   }
@@ -51,7 +55,7 @@ export function getContainerLogs(slug: string, lines = 100): string {
 export function getContainerStats(slug: string): { memory: string } | null {
   try {
     const mem = run(
-      `docker stats ac-${slug} --no-stream --format '{{.MemUsage}}' 2>/dev/null`,
+      `docker stats agentcenter-app-${slug}-1 --no-stream --format '{{.MemUsage}}' 2>/dev/null`,
       10_000
     );
     return { memory: mem };

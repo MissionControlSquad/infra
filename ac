@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# HOST_INFRA_DIR is used for docker compose --project-directory so paths
+# resolve correctly even when running inside a container
 INFRA_DIR="$(cd "$(dirname "$0")" && pwd)"
+HOST_INFRA_DIR="${AC_HOST_DIR:-$INFRA_DIR}"
 CLIENTS_DIR="$INFRA_DIR/clients"
 REGISTRY="$CLIENTS_DIR/registry.json"
 TEMPLATE="$INFRA_DIR/templates/client.yml"
@@ -29,7 +32,7 @@ require_slug() {
 }
 
 compose() {
-  local args=("-f" "$INFRA_DIR/docker-compose.yml")
+  local args=("--project-directory" "$HOST_INFRA_DIR" "-f" "$INFRA_DIR/docker-compose.yml")
   for f in "$CLIENTS_DIR"/*.yml; do
     [ -f "$f" ] && args+=("-f" "$f")
   done
@@ -38,7 +41,7 @@ compose() {
 
 compose_client() {
   local slug="$1"; shift
-  docker compose -f "$INFRA_DIR/docker-compose.yml" -f "$CLIENTS_DIR/$slug.yml" "$@"
+  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" -f "$CLIENTS_DIR/$slug.yml" "$@"
 }
 
 # ── Commands ─────────────────────────────────────────────────────────
@@ -87,7 +90,7 @@ cmd_create() {
      --arg cron "$cron_secret" \
      --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
      '.[$slug] = {name: $name, authSecret: $auth, cronSecret: $cron, createdAt: $date, domains: []}' \
-     "$REGISTRY" > "$tmp" && mv "$tmp" "$REGISTRY"
+     "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
   # 5. Start the container
   echo "  Starting container..."
@@ -120,7 +123,8 @@ cmd_delete() {
 
   # 1. Stop container
   echo "  Stopping container..."
-  compose_client "$slug" down --remove-orphans 2>/dev/null || true
+  compose_client "$slug" stop "app-$slug" 2>/dev/null || true
+  compose_client "$slug" rm -f "app-$slug" 2>/dev/null || true
 
   # 2. Drop database
   echo "  Dropping database client_$slug..."
@@ -133,7 +137,7 @@ cmd_delete() {
   # 4. Remove from registry
   local tmp
   tmp=$(mktemp)
-  jq --arg slug "$slug" 'del(.[$slug])' "$REGISTRY" > "$tmp" && mv "$tmp" "$REGISTRY"
+  jq --arg slug "$slug" 'del(.[$slug])' "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
   green "Client '$slug' deleted."
 }
@@ -197,7 +201,7 @@ EOF
   local tmp
   tmp=$(mktemp)
   jq --arg slug "$slug" --arg domain "$domain" \
-     '.[$slug].domains += [$domain]' "$REGISTRY" > "$tmp" && mv "$tmp" "$REGISTRY"
+     '.[$slug].domains += [$domain]' "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
   # Restart to pick up new labels
   compose_client "$slug" up -d "app-$slug"

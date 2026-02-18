@@ -1,7 +1,9 @@
 import fs from "fs";
 import path from "path";
 
-const REGISTRY_PATH = path.resolve(process.cwd(), "../clients/registry.json");
+const REGISTRY_PATH = process.env.NODE_ENV === "production"
+  ? path.join(process.cwd(), "clients/registry.json")
+  : path.resolve(process.cwd(), "../clients/registry.json");
 
 export interface ClientEntry {
   name: string;
