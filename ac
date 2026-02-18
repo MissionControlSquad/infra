@@ -126,10 +126,12 @@ cmd_delete() {
   compose_client "$slug" stop "app-$slug" 2>/dev/null || true
   compose_client "$slug" rm -f "app-$slug" 2>/dev/null || true
 
-  # 2. Drop database
-  echo "  Dropping database client_$slug..."
-  docker compose -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
-    psql -U postgres -c "DROP DATABASE IF EXISTS client_$slug;" 2>/dev/null || true
+  # 2. Rename database to free up the slug (keeps data as backup)
+  local ts
+  ts=$(date -u +%Y%m%d%H%M%S)
+  echo "  Renaming database client_$slug → deleted_${slug}_${ts}..."
+  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
+    psql -U postgres -c "ALTER DATABASE client_$slug RENAME TO deleted_${slug}_${ts};" 2>/dev/null || true
 
   # 3. Remove compose file
   rm -f "$CLIENTS_DIR/$slug.yml"

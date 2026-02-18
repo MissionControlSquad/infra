@@ -24,6 +24,9 @@ export default function ClientDetailPage({
   const [logs, setLogs] = useState("");
   const [loading, setLoading] = useState(true);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const logsRef = useRef<HTMLPreElement>(null);
   const router = useRouter();
 
@@ -58,12 +61,19 @@ export default function ClientDetailPage({
   }
 
   async function handleDelete() {
-    const res = await fetch(`/api/clients/${slug}`, { method: "DELETE" });
+    setDeleteError("");
+    setDeleting(true);
+    const res = await fetch(`/api/clients/${slug}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: deletePassword }),
+    });
     if (res.ok) {
       router.push("/");
     } else {
       const data = await res.json();
-      alert(data.error || "Failed to delete");
+      setDeleteError(data.error || "Failed to delete");
+      setDeleting(false);
     }
   }
 
@@ -168,20 +178,30 @@ export default function ClientDetailPage({
             <h3 className="text-lg font-semibold">Delete Client</h3>
             <p className="text-zinc-400 text-sm">
               Are you sure you want to delete <strong>{client.slug}</strong>?
-              This will remove the container and database permanently.
+              This will stop and remove the container. The database will be preserved.
             </p>
+            <input
+              type="password"
+              value={deletePassword}
+              onChange={(e) => setDeletePassword(e.target.value)}
+              placeholder="Enter admin password to confirm"
+              autoFocus
+              className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+            />
+            {deleteError && <p className="text-red-400 text-sm">{deleteError}</p>}
             <div className="flex gap-3 justify-end">
               <button
-                onClick={() => setShowDeleteModal(false)}
+                onClick={() => { setShowDeleteModal(false); setDeletePassword(""); setDeleteError(""); }}
                 className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={handleDelete}
-                className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                disabled={!deletePassword || deleting}
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
               >
-                Delete
+                {deleting ? "Deleting..." : "Delete"}
               </button>
             </div>
           </div>

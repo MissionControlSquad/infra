@@ -24,9 +24,14 @@ export default function HomePage() {
   }, []);
 
   async function handleDelete(slug: string) {
-    if (!confirm(`Delete client "${slug}"? This cannot be undone.`)) return;
+    const password = prompt(`Enter admin password to delete "${slug}":`);
+    if (!password) return;
 
-    const res = await fetch(`/api/clients/${slug}`, { method: "DELETE" });
+    const res = await fetch(`/api/clients/${slug}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
     if (res.ok) {
       setClients((prev) => prev.filter((c) => c.slug !== slug));
     } else {

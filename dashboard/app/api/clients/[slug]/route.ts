@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
+import { isAuthenticated, verifyPassword } from "@/lib/auth";
 import { getClient } from "@/lib/registry";
 import { deleteClient, getContainerStatus, getContainerStats } from "@/lib/shell";
 
@@ -30,11 +30,20 @@ export async function GET(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const { password } = await req.json();
+    if (!verifyPassword(password)) {
+      return NextResponse.json({ error: "Invalid password" }, { status: 403 });
+    }
+  } catch {
+    return NextResponse.json({ error: "Password required" }, { status: 400 });
   }
 
   const { slug } = await params;
