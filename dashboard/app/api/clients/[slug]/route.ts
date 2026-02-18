@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated, verifyPassword } from "@/lib/auth";
 import { getClient } from "@/lib/registry";
-import { deleteClient, getContainerStatus, getContainerStats } from "@/lib/shell";
+import { deleteClient, getContainerStatus, getContainerStats, getTableStats } from "@/lib/shell";
 
 export async function GET(
   _req: NextRequest,
@@ -27,6 +27,7 @@ export async function GET(
     createdAt: client.createdAt,
     domains: client.domains ?? [],
     version: client.version || "latest",
+    tables: getTableStats(slug),
   });
 }
 

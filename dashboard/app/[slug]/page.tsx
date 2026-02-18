@@ -13,6 +13,7 @@ interface ClientDetail {
   createdAt: string;
   domains: string[];
   version: string;
+  tables: { table: string; count: number }[];
 }
 
 export default function ClientDetailPage({
@@ -209,6 +210,35 @@ export default function ClientDetailPage({
             ? client.domains.join(", ")
             : "None"}
         </InfoCard>
+      </div>
+
+      {/* Database Tables */}
+      <div>
+        <h2 className="text-lg font-medium mb-2">Database Tables</h2>
+        {client.tables && client.tables.length > 0 ? (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800">
+                  <th className="text-left px-4 py-2.5 text-xs text-zinc-500 font-medium">Table Name</th>
+                  <th className="text-right px-4 py-2.5 text-xs text-zinc-500 font-medium">Row Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {client.tables.map((t) => (
+                  <tr key={t.table} className="border-b border-zinc-800 last:border-0">
+                    <td className="px-4 py-2 font-mono text-xs text-zinc-300">{t.table}</td>
+                    <td className="px-4 py-2 text-right text-xs text-zinc-400">{t.count.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 text-sm text-zinc-500">
+            No tables
+          </div>
+        )}
       </div>
 
       {/* Logs */}

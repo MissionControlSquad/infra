@@ -96,6 +96,34 @@ export function listAvailableVersions(): string[] {
   }
 }
 
+export function listDatabases(): string[] {
+  try {
+    const raw = run(
+      `docker exec agentcenter-postgres-1 psql -U postgres -t -A -c "SELECT datname FROM pg_database WHERE datname LIKE 'client_%' ORDER BY datname"`,
+      10_000
+    );
+    return raw.split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export function getTableStats(slug: string): { table: string; count: number }[] {
+  const db = `client_${slug}`;
+  try {
+    const raw = run(
+      `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -t -A -c "SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC"`,
+      10_000
+    );
+    return raw.split("\n").filter(Boolean).map((line) => {
+      const [table, count] = line.split("|");
+      return { table, count: parseInt(count, 10) || 0 };
+    });
+  } catch {
+    return [];
+  }
+}
+
 export function getSystemStats(): {
   memoryUsed: string;
   memoryTotal: string;
