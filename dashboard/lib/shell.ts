@@ -69,7 +69,13 @@ export function upgradeClient(slug: string, version: string): string {
   return run(`${AC_PATH} upgrade ${slug} --version ${version}`, 120_000);
 }
 
-export function listAvailableVersions(): string[] {
+export interface VersionInfo {
+  tag: string;
+  createdAt: string;
+  message?: string;
+}
+
+export function listAvailableVersions(): VersionInfo[] {
   const owner = process.env.GHCR_OWNER;
   const token = process.env.GHCR_TOKEN;
   if (!owner || !token) return [];
@@ -83,16 +89,49 @@ export function listAvailableVersions(): string[] {
       15_000
     );
     const data = JSON.parse(raw);
-    const tags: string[] = [];
+    const versions: VersionInfo[] = [];
     for (const entry of data) {
       const entryTags = entry.metadata?.container?.tags ?? [];
+      const createdAt = entry.created_at || "";
       for (const tag of entryTags) {
-        if (tag && tag !== "latest") tags.push(tag);
+        if (tag && tag !== "latest") {
+          versions.push({ tag, createdAt });
+        }
       }
     }
-    return tags;
+
+    // Try to enrich with release messages from GitHub Releases API
+    const releaseMessages = fetchReleaseMessages(owner, token);
+    for (const v of versions) {
+      if (releaseMessages[v.tag]) {
+        v.message = releaseMessages[v.tag];
+      }
+    }
+
+    return versions;
   } catch {
     return [];
+  }
+}
+
+function fetchReleaseMessages(owner: string, token: string): Record<string, string> {
+  try {
+    const raw = run(
+      `curl -sf -H "Authorization: Bearer ${token}" ` +
+      `"https://api.github.com/repos/${owner}/agentcenter-app/releases?per_page=50"`,
+      15_000
+    );
+    const releases = JSON.parse(raw);
+    const map: Record<string, string> = {};
+    for (const rel of releases) {
+      const tag = rel.tag_name;
+      if (tag) {
+        map[tag] = rel.name || rel.body?.split("\n")[0] || "";
+      }
+    }
+    return map;
+  } catch {
+    return {};
   }
 }
 

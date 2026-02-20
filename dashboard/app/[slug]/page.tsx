@@ -31,6 +31,7 @@ export default function ClientDetailPage({
   const [deleting, setDeleting] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
+  const [versionDetails, setVersionDetails] = useState<Record<string, { createdAt: string; message?: string }>>({});
   const [selectedVersion, setSelectedVersion] = useState("");
   const [upgrading, setUpgrading] = useState(false);
   const [upgradeError, setUpgradeError] = useState("");
@@ -98,6 +99,7 @@ export default function ClientDetailPage({
       const r = await fetch("/api/versions");
       const d = await r.json();
       setAvailableVersions(d.versions || []);
+      setVersionDetails(d.versionDetails || {});
     } catch {
       setAvailableVersions([]);
     }
@@ -273,18 +275,35 @@ export default function ClientDetailPage({
               Current version: <span className="font-mono">{client.version}</span>
             </p>
             {availableVersions.length > 0 ? (
-              <select
-                value={selectedVersion}
-                onChange={(e) => setSelectedVersion(e.target.value)}
-                className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              >
-                <option value="">Select version...</option>
-                {availableVersions.map((v) => (
-                  <option key={v} value={v}>
-                    {v} {v === client.version ? "(current)" : ""}
-                  </option>
-                ))}
-              </select>
+              <div className="max-h-48 overflow-y-auto border border-zinc-700 rounded-lg divide-y divide-zinc-800">
+                {availableVersions.map((v) => {
+                  const detail = versionDetails[v];
+                  const isCurrent = v === client.version;
+                  const isSelected = v === selectedVersion;
+                  return (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setSelectedVersion(v)}
+                      className={`w-full text-left px-3 py-2.5 text-sm transition-colors cursor-pointer ${
+                        isSelected
+                          ? "bg-blue-600/20 border-l-2 border-l-blue-500"
+                          : "bg-zinc-800/50 hover:bg-zinc-800 border-l-2 border-l-transparent"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs">{v}</span>
+                        {isCurrent && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-zinc-700 text-zinc-400 rounded">current</span>
+                        )}
+                      </div>
+                      {detail?.message && (
+                        <p className="text-xs text-zinc-400 mt-0.5 truncate">{detail.message}</p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             ) : (
               <p className="text-zinc-500 text-sm">No versions available from registry.</p>
             )}

@@ -10,7 +10,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const versions = listAvailableVersions();
+  const versionInfos = listAvailableVersions();
   const registry = readRegistry();
 
   const clientsByVersion: Record<string, string[]> = {};
@@ -20,5 +20,12 @@ export async function GET() {
     clientsByVersion[ver].push(slug);
   }
 
-  return NextResponse.json({ versions, clientsByVersion });
+  // Keep backward compat: versions as string[], plus new versionDetails map
+  const versions = versionInfos.map((v) => v.tag);
+  const versionDetails: Record<string, { createdAt: string; message?: string }> = {};
+  for (const v of versionInfos) {
+    versionDetails[v.tag] = { createdAt: v.createdAt, message: v.message };
+  }
+
+  return NextResponse.json({ versions, versionDetails, clientsByVersion });
 }

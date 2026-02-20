@@ -8,6 +8,7 @@ export default function CreatePage() {
   const [name, setName] = useState("");
   const [version, setVersion] = useState("");
   const [versions, setVersions] = useState<string[]>([]);
+  const [versionDetails, setVersionDetails] = useState<Record<string, { createdAt: string; message?: string }>>({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -18,6 +19,7 @@ export default function CreatePage() {
       .then((d) => {
         const v = d.versions || [];
         setVersions(v);
+        setVersionDetails(d.versionDetails || {});
         if (v.length > 0) setVersion(v[0]);
       })
       .catch(() => {});
@@ -93,15 +95,29 @@ export default function CreatePage() {
         {versions.length > 0 && (
           <div>
             <label className="block text-sm text-zinc-400 mb-1">Version</label>
-            <select
-              value={version}
-              onChange={(e) => setVersion(e.target.value)}
-              className="w-full px-4 py-2.5 bg-zinc-900 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
-            >
-              {versions.map((v) => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
+            <div className="max-h-48 overflow-y-auto border border-zinc-700 rounded-lg divide-y divide-zinc-800">
+              {versions.map((v) => {
+                const detail = versionDetails[v];
+                const isSelected = v === version;
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setVersion(v)}
+                    className={`w-full text-left px-3 py-2.5 text-sm transition-colors cursor-pointer ${
+                      isSelected
+                        ? "bg-blue-600/20 border-l-2 border-l-blue-500"
+                        : "bg-zinc-900 hover:bg-zinc-800 border-l-2 border-l-transparent"
+                    }`}
+                  >
+                    <span className="font-mono text-xs">{v}</span>
+                    {detail?.message && (
+                      <p className="text-xs text-zinc-400 mt-0.5 truncate">{detail.message}</p>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 

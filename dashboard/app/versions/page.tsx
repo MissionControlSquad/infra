@@ -2,8 +2,14 @@
 
 import { useEffect, useState } from "react";
 
+interface VersionDetail {
+  createdAt: string;
+  message?: string;
+}
+
 interface VersionData {
   versions: string[];
+  versionDetails: Record<string, VersionDetail>;
   clientsByVersion: Record<string, string[]>;
 }
 
@@ -49,6 +55,9 @@ export default function VersionsPage() {
                   Version
                 </th>
                 <th className="text-left px-4 py-3 text-zinc-400 font-medium">
+                  Message
+                </th>
+                <th className="text-left px-4 py-3 text-zinc-400 font-medium">
                   Source
                 </th>
                 <th className="text-left px-4 py-3 text-zinc-400 font-medium">
@@ -60,12 +69,29 @@ export default function VersionsPage() {
               {sorted.map((version) => {
                 const clients = data.clientsByVersion[version] || [];
                 const isFromRegistry = data.versions.includes(version);
+                const detail = data.versionDetails?.[version];
                 return (
                   <tr
                     key={version}
                     className="border-b border-zinc-800/50 last:border-0"
                   >
-                    <td className="px-4 py-3 font-mono">{version}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-mono">{version}</div>
+                      {detail?.createdAt && (
+                        <div className="text-xs text-zinc-500 mt-0.5">
+                          {new Date(detail.createdAt).toLocaleDateString()}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {detail?.message ? (
+                        <span className="text-xs text-zinc-300 line-clamp-2">
+                          {detail.message}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-600 text-xs">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       {isFromRegistry ? (
                         <span className="text-xs px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded">
