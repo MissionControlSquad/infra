@@ -168,7 +168,7 @@ export function getAdminUsers(slug: string): { id: string; username: string }[] 
   const db = `client_${slug}`;
   try {
     const raw = run(
-      `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -t -A -c "SELECT id, username FROM admin_users ORDER BY created_at ASC"`,
+      `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -t -A -c "SELECT id, username FROM admin_users ORDER BY \\"createdAt\\" ASC"`,
       10_000
     );
     return raw.split("\n").filter(Boolean).map((line) => {
