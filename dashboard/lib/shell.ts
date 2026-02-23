@@ -1,4 +1,5 @@
 import { execSync } from "child_process";
+import crypto from "crypto";
 import path from "path";
 
 // In Docker: cwd is /app, ac is at /app/ac, clients/ and templates/ mounted under /app
@@ -161,6 +162,32 @@ export function getTableStats(slug: string): { table: string; count: number }[] 
   } catch {
     return [];
   }
+}
+
+export function getAdminUsers(slug: string): { id: string; username: string }[] {
+  const db = `client_${slug}`;
+  try {
+    const raw = run(
+      `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -t -A -c "SELECT id, username FROM admin_users ORDER BY created_at ASC"`,
+      10_000
+    );
+    return raw.split("\n").filter(Boolean).map((line) => {
+      const [id, username] = line.split("|");
+      return { id, username };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function insertResetToken(slug: string, tokenHash: string, adminUserId: string, expiresAt: string): void {
+  const db = `client_${slug}`;
+  const id = crypto.randomUUID();
+  // createdById = adminUserId (self-service from infra)
+  run(
+    `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -c "INSERT INTO password_reset_tokens (id, \\"tokenHash\\", \\"adminUserId\\", \\"createdById\\", \\"expiresAt\\", \\"createdAt\\") VALUES ('${id}', '${tokenHash}', '${adminUserId}', '${adminUserId}', '${expiresAt}', NOW())"`,
+    10_000
+  );
 }
 
 export function listContainers(): { name: string; status: string; image: string }[] {

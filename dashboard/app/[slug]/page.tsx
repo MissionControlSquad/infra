@@ -35,6 +35,13 @@ export default function ClientDetailPage({
   const [selectedVersion, setSelectedVersion] = useState("");
   const [upgrading, setUpgrading] = useState(false);
   const [upgradeError, setUpgradeError] = useState("");
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [adminUsers, setAdminUsers] = useState<{ id: string; username: string }[]>([]);
+  const [selectedAdminId, setSelectedAdminId] = useState("");
+  const [generatingReset, setGeneratingReset] = useState(false);
+  const [resetResult, setResetResult] = useState<{ resetUrl: string; expiresAt: string; username: string } | null>(null);
+  const [resetError, setResetError] = useState("");
+  const [copied, setCopied] = useState(false);
   const logsRef = useRef<HTMLPreElement>(null);
   const router = useRouter();
 
@@ -134,6 +141,46 @@ export default function ClientDetailPage({
     }
   }
 
+  async function openResetModal() {
+    setShowResetModal(true);
+    setResetError("");
+    setResetResult(null);
+    setSelectedAdminId("");
+    setCopied(false);
+    try {
+      const r = await fetch(`/api/clients/${slug}/reset-password`);
+      const d = await r.json();
+      setAdminUsers(d.adminUsers || []);
+    } catch {
+      setAdminUsers([]);
+    }
+  }
+
+  async function handleGenerateReset() {
+    if (!selectedAdminId) return;
+    setGeneratingReset(true);
+    setResetError("");
+    setResetResult(null);
+    setCopied(false);
+    try {
+      const res = await fetch(`/api/clients/${slug}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminUserId: selectedAdminId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setResetError(data.error || "Failed to generate reset link");
+      } else {
+        setResetResult(data);
+      }
+    } catch {
+      setResetError("Failed to generate reset link");
+    } finally {
+      setGeneratingReset(false);
+    }
+  }
+
   if (loading) return <p className="text-zinc-500">Loading...</p>;
   if (!client) return <p className="text-red-400">Client not found</p>;
 
@@ -145,6 +192,12 @@ export default function ClientDetailPage({
           <p className="text-zinc-500 font-mono text-sm">{client.slug}</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={openResetModal}
+            className="px-4 py-2 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+          >
+            Reset Password
+          </button>
           <button
             onClick={openUpgradeModal}
             className="px-4 py-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 rounded-lg text-sm font-medium transition-colors cursor-pointer"
@@ -321,6 +374,82 @@ export default function ClientDetailPage({
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
               >
                 {upgrading ? "Upgrading..." : "Upgrade"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-md w-full mx-4 space-y-4">
+            <h3 className="text-lg font-semibold">Reset Password</h3>
+            <p className="text-zinc-400 text-sm">
+              Generate a one-time reset link for a client admin. The link expires in 30 minutes.
+            </p>
+
+            {adminUsers.length > 0 ? (
+              <div className="space-y-3">
+                <select
+                  value={selectedAdminId}
+                  onChange={(e) => { setSelectedAdminId(e.target.value); setResetResult(null); setCopied(false); }}
+                  className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm"
+                >
+                  <option value="">Select admin user...</option>
+                  {adminUsers.map((u) => (
+                    <option key={u.id} value={u.id}>{u.username}</option>
+                  ))}
+                </select>
+
+                {!resetResult && (
+                  <button
+                    onClick={handleGenerateReset}
+                    disabled={!selectedAdminId || generatingReset}
+                    className="w-full px-4 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                  >
+                    {generatingReset ? "Generating..." : "Generate Reset Link"}
+                  </button>
+                )}
+
+                {resetResult && (
+                  <div className="space-y-2 p-3 bg-zinc-800 border border-zinc-700 rounded-lg">
+                    <p className="text-xs text-zinc-400">
+                      Reset link for <span className="text-zinc-200 font-medium">{resetResult.username}</span> — expires {new Date(resetResult.expiresAt).toLocaleTimeString()}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={resetResult.resetUrl}
+                        className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-xs font-mono text-zinc-300 select-all"
+                      />
+                      <button
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(resetResult.resetUrl);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className="flex-shrink-0 px-3 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg text-xs transition-colors cursor-pointer"
+                      >
+                        {copied ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-zinc-500 text-sm">No admin users found for this client.</p>
+            )}
+
+            {resetError && <p className="text-red-400 text-sm">{resetError}</p>}
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => { setShowResetModal(false); setResetResult(null); setResetError(""); }}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm transition-colors cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>
