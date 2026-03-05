@@ -42,6 +42,7 @@ export default function ClientDetailPage({
   const [resetResult, setResetResult] = useState<{ resetUrl: string; expiresAt: string; username: string } | null>(null);
   const [resetError, setResetError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [refreshingEnv, setRefreshingEnv] = useState(false);
   const logsRef = useRef<HTMLPreElement>(null);
   const router = useRouter();
 
@@ -67,6 +68,20 @@ export default function ClientDetailPage({
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
   }, [logs]);
+
+  async function handleRefreshEnv() {
+    setRefreshingEnv(true);
+    try {
+      await fetch(`/api/clients/${slug}/refresh-env`, { method: "POST" });
+      setTimeout(async () => {
+        const r = await fetch(`/api/clients/${slug}/logs`);
+        const d = await r.json();
+        setLogs(d.logs || "");
+      }, 2000);
+    } finally {
+      setRefreshingEnv(false);
+    }
+  }
 
   async function handleRestart() {
     const res = await fetch(`/api/clients/${slug}/restart`, { method: "POST" });
@@ -203,6 +218,13 @@ export default function ClientDetailPage({
             className="px-4 py-2 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 rounded-lg text-sm font-medium transition-colors cursor-pointer"
           >
             Upgrade
+          </button>
+          <button
+            onClick={handleRefreshEnv}
+            disabled={refreshingEnv}
+            className="px-4 py-2 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+          >
+            {refreshingEnv ? "Refreshing..." : "Refresh Env"}
           </button>
           <button
             onClick={handleRestart}

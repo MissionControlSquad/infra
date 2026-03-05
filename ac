@@ -298,13 +298,30 @@ cmd_upgrade() {
   fi
   docker pull "$image"
 
-  # 2. Read existing secrets from registry
+  # 2. Regenerate compose file with new image
+  echo "  Regenerating compose file..."
+  regenerate_compose "$slug" "$image"
+
+  # 3. Update version in registry
+  local tmp
+  tmp=$(mktemp)
+  jq --arg slug "$slug" --arg ver "$version" \
+     '.[$slug].version = $ver' \
+     "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
+
+  # 5. Restart container with new image
+  echo "  Restarting container..."
+  compose_client "$slug" up -d "app-$slug"
+
+  green "Client '$slug' upgraded to version $version"
+}
+
+regenerate_compose() {
+  local slug="$1" image="$2"
   local auth_secret cron_secret
   auth_secret=$(jq -r ".\"$slug\".authSecret" "$REGISTRY")
   cron_secret=$(jq -r ".\"$slug\".cronSecret" "$REGISTRY")
 
-  # 3. Regenerate compose file with new image
-  echo "  Regenerating compose file..."
   sed -e "s/__SLUG__/$slug/g" \
       -e "s/__AUTH_SECRET__/$auth_secret/g" \
       -e "s/__CRON_SECRET__/$cron_secret/g" \
@@ -325,19 +342,34 @@ cmd_upgrade() {
       - traefik.http.services.${router_name}.loadbalancer.server.port=3000
 EOF
   done
+}
 
-  # 4. Update version in registry
-  local tmp
-  tmp=$(mktemp)
-  jq --arg slug "$slug" --arg ver "$version" \
-     '.[$slug].version = $ver' \
-     "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
+cmd_refresh_env() {
+  local target="${1:---all}"
 
-  # 5. Restart container with new image
-  echo "  Restarting container..."
-  compose_client "$slug" up -d "app-$slug"
+  if [ "$target" = "--all" ]; then
+    bold "Refreshing env for all clients..."
+    for slug in $(jq -r 'keys[]' "$REGISTRY"); do
+      local version image
+      version=$(jq -r ".\"$slug\".version // \"latest\"" "$REGISTRY")
+      image=$(resolve_image "$version")
+      echo "  Regenerating $slug..."
+      regenerate_compose "$slug" "$image"
+      compose_client "$slug" up -d "app-$slug"
+    done
+  else
+    local slug
+    slug=$(require_slug "$target")
+    [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+    local version image
+    version=$(jq -r ".\"$slug\".version // \"latest\"" "$REGISTRY")
+    image=$(resolve_image "$version")
+    bold "Refreshing env for $slug..."
+    regenerate_compose "$slug" "$image"
+    compose_client "$slug" up -d "app-$slug"
+  fi
 
-  green "Client '$slug' upgraded to version $version"
+  green "Environment refreshed."
 }
 
 cmd_status() {
@@ -373,6 +405,7 @@ Commands:
   add-domain <slug> <domain>      Add a custom domain to a client
   update [slug|--all]             Pull latest image and restart clients
   upgrade <slug> --version <tag>  Upgrade a client to a specific version
+  refresh-env [slug|--all]        Regenerate compose files with latest env vars
   status                          Show system resource usage
   help                            Show this help message
 
@@ -400,8 +433,9 @@ case "$COMMAND" in
   restart)    cmd_restart "$@" ;;
   add-domain) cmd_add_domain "$@" ;;
   update)     cmd_update "$@" ;;
-  upgrade)    cmd_upgrade "$@" ;;
-  status)     cmd_status ;;
+  upgrade)     cmd_upgrade "$@" ;;
+  refresh-env) cmd_refresh_env "$@" ;;
+  status)      cmd_status ;;
   help|--help|-h) cmd_help ;;
   *) die "Unknown command: $COMMAND. Run './ac help' for usage." ;;
 esac

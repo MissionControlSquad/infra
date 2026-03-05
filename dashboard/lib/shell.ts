@@ -70,6 +70,14 @@ export function upgradeClient(slug: string, version: string): string {
   return run(`${AC_PATH} upgrade ${slug} --version ${version}`, 120_000);
 }
 
+export function refreshEnv(slug: string): string {
+  return run(`${AC_PATH} refresh-env ${slug}`, 60_000);
+}
+
+export function refreshEnvAll(): string {
+  return run(`${AC_PATH} refresh-env --all`, 120_000);
+}
+
 export interface VersionInfo {
   tag: string;
   createdAt: string;
