@@ -64,7 +64,7 @@ jobs:
           GHCR_OWNER=${{ vars.GHCR_OWNER }}
           VAPID_PUBLIC_KEY=${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
-          VAPID_SUBJECT=${{ vars.VAPID_SUBJECT }}
+          VAPID_SUBJECT=${{ secrets.VAPID_SUBJECT }}
           RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
           NOTIFICATION_FROM_EMAIL=${{ vars.NOTIFICATION_FROM_EMAIL }}
           EOF
