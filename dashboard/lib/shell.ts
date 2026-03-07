@@ -198,6 +198,58 @@ export function insertResetToken(slug: string, tokenHash: string, adminUserId: s
   );
 }
 
+// ── Feature Flags ───────────────────────────────────────────────
+
+export interface FeatureFlagInfo {
+  key: string;
+  enabled: boolean;
+  managedBy: "system" | "user";
+  description: string;
+}
+
+export function getFeatureFlags(slug: string): FeatureFlagInfo[] {
+  const db = `client_${slug}`;
+  try {
+    const raw = run(
+      `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -t -A -c "SELECT key, enabled, COALESCE(\\\"managedBy\\\", 'system'), COALESCE(description, '') FROM feature_flags ORDER BY key"`,
+      10_000
+    );
+    return raw.split("\n").filter(Boolean).map((line) => {
+      const [key, enabled, managedBy, description] = line.split("|");
+      return {
+        key,
+        enabled: enabled === "t",
+        managedBy: (managedBy === "user" ? "user" : "system") as "system" | "user",
+        description: description || "",
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function setFeatureFlag(slug: string, key: string, enabled: boolean): string {
+  const db = `client_${slug}`;
+  const val = enabled ? "true" : "false";
+  run(
+    `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -c "UPDATE feature_flags SET enabled = ${val}, \\"updatedAt\\" = NOW() WHERE key = '${key}'"`,
+    10_000
+  );
+
+  // Invalidate app cache
+  try {
+    run(`${AC_PATH} enable ${slug} _noop 2>/dev/null || true`, 5_000);
+  } catch {
+    // Best effort
+  }
+
+  return `Feature '${key}' ${enabled ? "enabled" : "disabled"} for ${slug}`;
+}
+
+export function setClientPlan(slug: string, plan: string): string {
+  return run(`${AC_PATH} set-plan ${slug} ${plan}`, 30_000);
+}
+
 export function listContainers(): { name: string; status: string; image: string }[] {
   try {
     const raw = run("docker ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}'", 10_000);

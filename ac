@@ -128,6 +128,10 @@ cmd_create() {
   echo "  Starting container..."
   compose_client "$slug" up -d "app-$slug"
 
+  # 7. Seed default feature flags
+  echo "  Seeding feature flags..."
+  seed_feature_flags "$slug"
+
   green "Client '$slug' created!"
   echo "  URL: https://$slug.app.agentcenter.cloud"
   echo "  DB:  client_$slug"
@@ -389,6 +393,121 @@ cmd_status() {
   docker system df -v 2>/dev/null | grep pg_data || echo "  (not found)"
 }
 
+psql_client() {
+  local slug="$1"; shift
+  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
+    psql -U postgres -d "client_$slug" "$@"
+}
+
+seed_feature_flags() {
+  local slug="$1"
+  # Create the feature_flags table and insert defaults if the table doesn't exist yet.
+  # The app's Prisma migration will create it normally, but this ensures flags are available
+  # immediately after creation before the first app boot completes migrations.
+  psql_client "$slug" -c "
+    CREATE TABLE IF NOT EXISTS feature_flags (
+      id TEXT PRIMARY KEY,
+      key TEXT UNIQUE NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT false,
+      \"managedBy\" TEXT NOT NULL DEFAULT 'system',
+      description TEXT,
+      \"updatedAt\" TIMESTAMP(3) NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO feature_flags (id, key, enabled, \"managedBy\", description, \"updatedAt\") VALUES
+      (gen_random_uuid()::text, 'channels',        true,  'system', 'Team messaging channels and DMs',             NOW()),
+      (gen_random_uuid()::text, 'analytics',       true,  'system', 'Analytics dashboard with charts and metrics',  NOW()),
+      (gen_random_uuid()::text, 'recurring_tasks', true,  'system', 'Recurring/scheduled task templates',           NOW()),
+      (gen_random_uuid()::text, 'cloud_vms',       false, 'system', 'Cloud VM provisioning for agents',             NOW()),
+      (gen_random_uuid()::text, 'reviews',         true,  'system', 'Task review workflow (approve/reject/clarify)',NOW()),
+      (gen_random_uuid()::text, 'documents',       true,  'system', 'Document management and project docs',         NOW()),
+      (gen_random_uuid()::text, 'agent_queue',     true,  'user',   'Agent work queue management',                  NOW()),
+      (gen_random_uuid()::text, 'notifications',   true,  'user',   'Push and email notifications',                 NOW())
+    ON CONFLICT (key) DO NOTHING;
+  " 2>/dev/null
+}
+
+notify_flag_change() {
+  local slug="$1"
+  local cron_secret
+  cron_secret=$(jq -r ".\"$slug\".cronSecret" "$REGISTRY")
+  # Invalidate the app's in-memory flag cache via REST endpoint
+  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T "app-$slug" \
+    curl -sf -X POST -H "Authorization: Bearer $cron_secret" http://localhost:3000/api/feature-flags/invalidate 2>/dev/null || true
+}
+
+cmd_features() {
+  local slug
+  slug=$(require_slug "${1:-}")
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+
+  bold "Feature flags for $slug:"
+  printf "  %-25s %-10s %-10s %s\n" "KEY" "STATUS" "MANAGED" "DESCRIPTION"
+  printf "  %-25s %-10s %-10s %s\n" "---" "------" "-------" "-----------"
+
+  psql_client "$slug" -t -A -c \
+    "SELECT key, enabled, COALESCE(\"managedBy\", 'system'), COALESCE(description, '') FROM feature_flags ORDER BY key" 2>/dev/null \
+  | while IFS='|' read -r key enabled managed desc; do
+      local status
+      if [ "$enabled" = "t" ]; then status="enabled"; else status="disabled"; fi
+      printf "  %-25s %-10s %-10s %s\n" "$key" "$status" "$managed" "$desc"
+    done
+}
+
+cmd_enable() {
+  local slug feature
+  slug=$(require_slug "${1:-}")
+  feature="${2:-}"
+  [ -n "$feature" ] || die "Usage: $0 enable <slug> <feature>"
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+
+  psql_client "$slug" -c \
+    "UPDATE feature_flags SET enabled = true, \"updatedAt\" = NOW() WHERE key = '$feature'" 2>/dev/null
+
+  notify_flag_change "$slug"
+  green "Feature '$feature' enabled for $slug"
+}
+
+cmd_disable() {
+  local slug feature
+  slug=$(require_slug "${1:-}")
+  feature="${2:-}"
+  [ -n "$feature" ] || die "Usage: $0 disable <slug> <feature>"
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+
+  psql_client "$slug" -c \
+    "UPDATE feature_flags SET enabled = false, \"updatedAt\" = NOW() WHERE key = '$feature'" 2>/dev/null
+
+  notify_flag_change "$slug"
+  green "Feature '$feature' disabled for $slug"
+}
+
+cmd_set_plan() {
+  local slug plan
+  slug=$(require_slug "${1:-}")
+  plan="${2:-}"
+  [ -n "$plan" ] || die "Usage: $0 set-plan <slug> <free|pro|enterprise>"
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+
+  case "$plan" in
+    free)
+      psql_client "$slug" -c "UPDATE feature_flags SET enabled = CASE WHEN key IN ('channels', 'analytics', 'recurring_tasks', 'cloud_vms', 'reviews', 'documents', 'agent_queue', 'notifications') THEN key IN ('notifications') ELSE enabled END, \"updatedAt\" = NOW()" 2>/dev/null
+      ;;
+    pro)
+      psql_client "$slug" -c "UPDATE feature_flags SET enabled = CASE WHEN key IN ('channels', 'analytics', 'recurring_tasks', 'reviews', 'documents', 'agent_queue', 'notifications') THEN true WHEN key = 'cloud_vms' THEN false ELSE enabled END, \"updatedAt\" = NOW()" 2>/dev/null
+      ;;
+    enterprise)
+      psql_client "$slug" -c "UPDATE feature_flags SET enabled = true, \"updatedAt\" = NOW()" 2>/dev/null
+      ;;
+    *)
+      die "Unknown plan: $plan. Use: free, pro, enterprise"
+      ;;
+  esac
+
+  notify_flag_change "$slug"
+  green "Plan '$plan' applied to $slug"
+  cmd_features "$slug"
+}
+
 cmd_help() {
   cat <<'EOF'
 AgentCenter.Cloud — Per-Client Deployment CLI
@@ -407,6 +526,12 @@ Commands:
   upgrade <slug> --version <tag>  Upgrade a client to a specific version
   refresh-env [slug|--all]        Regenerate compose files with latest env vars
   status                          Show system resource usage
+
+  features <slug>                 List feature flags for a client
+  enable <slug> <feature>         Enable a feature for a client
+  disable <slug> <feature>        Disable a feature for a client
+  set-plan <slug> <plan>          Apply a plan preset (free|pro|enterprise)
+
   help                            Show this help message
 
 Examples:
@@ -416,6 +541,10 @@ Examples:
   ./ac update --all
   ./ac upgrade acme --version 1.3.0
   ./ac add-domain acme app.acmecorp.com
+  ./ac features acme
+  ./ac enable acme analytics
+  ./ac disable acme cloud_vms
+  ./ac set-plan acme pro
   ./ac delete acme --confirm
 EOF
 }
@@ -436,6 +565,10 @@ case "$COMMAND" in
   upgrade)     cmd_upgrade "$@" ;;
   refresh-env) cmd_refresh_env "$@" ;;
   status)      cmd_status ;;
+  features)    cmd_features "$@" ;;
+  enable)      cmd_enable "$@" ;;
+  disable)     cmd_disable "$@" ;;
+  set-plan)    cmd_set_plan "$@" ;;
   help|--help|-h) cmd_help ;;
   *) die "Unknown command: $COMMAND. Run './ac help' for usage." ;;
 esac

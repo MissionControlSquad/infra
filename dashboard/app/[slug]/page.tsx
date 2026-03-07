@@ -43,6 +43,10 @@ export default function ClientDetailPage({
   const [resetError, setResetError] = useState("");
   const [copied, setCopied] = useState(false);
   const [refreshingEnv, setRefreshingEnv] = useState(false);
+  const [flags, setFlags] = useState<{ key: string; enabled: boolean; managedBy: string; description: string }[]>([]);
+  const [flagsLoading, setFlagsLoading] = useState(true);
+  const [togglingFlag, setTogglingFlag] = useState<string | null>(null);
+  const [settingPlan, setSettingPlan] = useState(false);
   const logsRef = useRef<HTMLPreElement>(null);
   const router = useRouter();
 
@@ -61,6 +65,11 @@ export default function ClientDetailPage({
         return r.json();
       })
       .then((d) => setLogs(d.logs || ""));
+
+    fetch(`/api/clients/${slug}/features`)
+      .then((r) => r.ok ? r.json() : { flags: [] })
+      .then((d) => setFlags(d.flags || []))
+      .finally(() => setFlagsLoading(false));
   }, [slug]);
 
   useEffect(() => {
@@ -196,6 +205,39 @@ export default function ClientDetailPage({
     }
   }
 
+  async function handleToggleFlag(key: string, enabled: boolean) {
+    setTogglingFlag(key);
+    try {
+      const res = await fetch(`/api/clients/${slug}/features`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, enabled }),
+      });
+      if (res.ok) {
+        setFlags(prev => prev.map(f => f.key === key ? { ...f, enabled } : f));
+      }
+    } finally {
+      setTogglingFlag(null);
+    }
+  }
+
+  async function handleSetPlan(plan: string) {
+    setSettingPlan(true);
+    try {
+      await fetch(`/api/clients/${slug}/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+      // Refresh flags
+      const r = await fetch(`/api/clients/${slug}/features`);
+      const d = await r.json();
+      setFlags(d.flags || []);
+    } finally {
+      setSettingPlan(false);
+    }
+  }
+
   if (loading) return <p className="text-zinc-500">Loading...</p>;
   if (!client) return <p className="text-red-400">Client not found</p>;
 
@@ -314,6 +356,67 @@ export default function ClientDetailPage({
         ) : (
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 text-sm text-zinc-500">
             No tables
+          </div>
+        )}
+      </div>
+
+      {/* Feature Flags */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-medium">Feature Flags</h2>
+          <div className="flex gap-2">
+            {["free", "pro", "enterprise"].map((plan) => (
+              <button
+                key={plan}
+                onClick={() => handleSetPlan(plan)}
+                disabled={settingPlan}
+                className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded text-xs font-medium capitalize transition-colors cursor-pointer"
+              >
+                {plan}
+              </button>
+            ))}
+          </div>
+        </div>
+        {flagsLoading ? (
+          <p className="text-zinc-500 text-sm">Loading flags...</p>
+        ) : flags.length === 0 ? (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 text-sm text-zinc-500">
+            No feature flags configured
+          </div>
+        ) : (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg divide-y divide-zinc-800">
+            {flags.map((flag) => (
+              <div key={flag.key} className="flex items-center justify-between px-4 py-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-zinc-200">{flag.key}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                      flag.managedBy === "system"
+                        ? "bg-blue-500/10 text-blue-400"
+                        : "bg-emerald-500/10 text-emerald-400"
+                    }`}>
+                      {flag.managedBy}
+                    </span>
+                  </div>
+                  {flag.description && (
+                    <p className="text-xs text-zinc-500 mt-0.5">{flag.description}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => handleToggleFlag(flag.key, !flag.enabled)}
+                  disabled={togglingFlag === flag.key}
+                  className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                    flag.enabled ? "bg-emerald-600" : "bg-zinc-700"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                      flag.enabled ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </div>
