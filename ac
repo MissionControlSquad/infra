@@ -514,29 +514,71 @@ cmd_disable() {
   green "Feature '$feature' disabled for $slug"
 }
 
-cmd_set_plan() {
-  local slug plan
-  slug=$(require_slug "${1:-}")
-  plan="${2:-}"
-  [ -n "$plan" ] || die "Usage: $0 set-plan <slug> <free|pro|enterprise>"
-  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+# Sync DB feature flags to match a license plan.
+# Enables flags included in the plan, disables the rest.
+# Plan → features mapping matches dashboard/lib/license.ts PLAN_DEFAULTS
+sync_plan_flags() {
+  local slug="$1" plan="$2"
 
   case "$plan" in
-    free)
-      psql_client "$slug" -c "UPDATE feature_flags SET enabled = CASE WHEN key IN ('channels', 'analytics', 'recurring_tasks', 'cloud_vms', 'reviews', 'documents', 'agent_queue', 'notifications') THEN key IN ('notifications') ELSE enabled END, \"updatedAt\" = NOW()" 2>/dev/null
+    starter)
+      # channels, documents, agent_queue
+      psql_client "$slug" -c "UPDATE feature_flags SET enabled = (key IN ('channels', 'documents', 'agent_queue')), \"updatedAt\" = NOW() WHERE \"managedBy\" = 'system'" 2>/dev/null
       ;;
     pro)
-      psql_client "$slug" -c "UPDATE feature_flags SET enabled = CASE WHEN key IN ('channels', 'analytics', 'recurring_tasks', 'reviews', 'documents', 'agent_queue', 'notifications') THEN true WHEN key = 'cloud_vms' THEN false ELSE enabled END, \"updatedAt\" = NOW()" 2>/dev/null
+      # channels, documents, agent_queue, reviews, recurring_tasks, notifications
+      psql_client "$slug" -c "UPDATE feature_flags SET enabled = (key IN ('channels', 'documents', 'agent_queue', 'reviews', 'recurring_tasks', 'notifications')), \"updatedAt\" = NOW() WHERE \"managedBy\" = 'system'" 2>/dev/null
       ;;
     enterprise)
-      psql_client "$slug" -c "UPDATE feature_flags SET enabled = true, \"updatedAt\" = NOW()" 2>/dev/null
+      # everything
+      psql_client "$slug" -c "UPDATE feature_flags SET enabled = true, \"updatedAt\" = NOW() WHERE \"managedBy\" = 'system'" 2>/dev/null
       ;;
     *)
-      die "Unknown plan: $plan. Use: free, pro, enterprise"
+      return 1
       ;;
   esac
 
   notify_flag_change "$slug"
+}
+
+cmd_set_plan() {
+  local slug plan
+  slug=$(require_slug "${1:-}")
+  plan="${2:-}"
+  [ -n "$plan" ] || die "Usage: $0 set-plan <slug> <starter|pro|enterprise>"
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+  [[ "$plan" =~ ^(starter|pro|enterprise)$ ]] || die "Unknown plan: $plan. Use: starter, pro, enterprise"
+
+  # 1. Update license to new plan
+  echo "  Updating license..."
+  local name
+  name=$(jq -r ".\"$slug\".name // \"$slug\"" "$REGISTRY")
+  local refresh_token
+  refresh_token=$(issue_license_token "$slug" "$name" "$plan")
+
+  if [ "$refresh_token" != "__PENDING__" ]; then
+    # Store new token in registry
+    local tmp
+    tmp=$(mktemp)
+    jq --arg slug "$slug" --arg lic "$refresh_token" \
+       '.[$slug].licenseRefreshToken = $lic' \
+       "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
+
+    # Regenerate compose with new token and restart
+    local version image
+    version=$(jq -r ".\"$slug\".version // \"latest\"" "$REGISTRY")
+    image=$(resolve_image "$version")
+    regenerate_compose "$slug" "$image"
+    compose_client "$slug" up -d "app-$slug"
+    echo "  License updated to $plan"
+  else
+    echo "  Warning: Could not update license — only updating feature flags"
+  fi
+
+  # 2. Sync feature flags to match plan
+  echo "  Syncing feature flags..."
+  sync_plan_flags "$slug" "$plan"
+
   green "Plan '$plan' applied to $slug"
   cmd_features "$slug"
 }
@@ -617,6 +659,10 @@ cmd_issue_license() {
     echo "  Plan: $plan"
     echo "  The container will auto-activate on startup."
   fi
+
+  # Sync feature flags to match the plan
+  echo "  Syncing feature flags to $plan plan..."
+  sync_plan_flags "$slug" "$plan"
 }
 
 cmd_help() {
@@ -645,7 +691,8 @@ Commands:
   features <slug>                 List feature flags for a client
   enable <slug> <feature>         Enable a feature for a client
   disable <slug> <feature>        Disable a feature for a client
-  set-plan <slug> <plan>          Apply a plan preset (free|pro|enterprise)
+  set-plan <slug> <plan>          Change plan (starter|pro|enterprise)
+                                    Updates license + feature flags together
 
   help                            Show this help message
 
