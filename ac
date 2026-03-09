@@ -141,7 +141,8 @@ cmd_create() {
      --arg cron "$cron_secret" \
      --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
      --arg ver "$version" \
-     '.[$slug] = {name: $name, authSecret: $auth, cronSecret: $cron, createdAt: $date, domains: [], version: $ver}' \
+     --arg lic "$license_refresh_token" \
+     '.[$slug] = {name: $name, authSecret: $auth, cronSecret: $cron, licenseRefreshToken: $lic, createdAt: $date, domains: [], version: $ver}' \
      "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
   # 7. Start the container
@@ -342,14 +343,16 @@ cmd_upgrade() {
 
 regenerate_compose() {
   local slug="$1" image="$2"
-  local auth_secret cron_secret
+  local auth_secret cron_secret license_refresh_token
   auth_secret=$(jq -r ".\"$slug\".authSecret" "$REGISTRY")
   cron_secret=$(jq -r ".\"$slug\".cronSecret" "$REGISTRY")
+  license_refresh_token=$(jq -r ".\"$slug\".licenseRefreshToken // \"__PENDING__\"" "$REGISTRY")
 
   sed -e "s/__SLUG__/$slug/g" \
       -e "s/__AUTH_SECRET__/$auth_secret/g" \
       -e "s/__CRON_SECRET__/$cron_secret/g" \
       -e "s|__IMAGE__|$image|g" \
+      -e "s|__LICENSE_REFRESH_TOKEN__|$license_refresh_token|g" \
       "$TEMPLATE" > "$CLIENTS_DIR/$slug.yml"
 
   # Re-apply custom domains if any
@@ -452,7 +455,7 @@ notify_flag_change() {
   cron_secret=$(jq -r ".\"$slug\".cronSecret" "$REGISTRY")
   # Invalidate the app's in-memory flag cache via REST endpoint
   docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T "app-$slug" \
-    curl -sf -X POST -H "Authorization: Bearer $cron_secret" http://localhost:3000/api/feature-flags/invalidate 2>/dev/null || true
+    curl -sf -X POST -H "Authorization: Bearer $cron_secret" http://127.0.0.1:3000/api/feature-flags/invalidate 2>/dev/null || true
 }
 
 cmd_features() {
