@@ -339,20 +339,11 @@ regenerate_compose() {
   cron_secret=$(jq -r ".\"$slug\".cronSecret" "$REGISTRY")
   license_refresh_token=$(jq -r ".\"$slug\".licenseRefreshToken // \"__PENDING__\"" "$REGISTRY")
 
-  # Read the license public key (single-line, \\n-escaped for env var)
-  local keys_dir="$INFRA_DIR/keys"
-  if [ -f "$keys_dir/license-public.pem" ]; then
-    license_public_key=$(awk '{printf "%s\\n", $0}' "$keys_dir/license-public.pem")
-  else
-    license_public_key=""
-  fi
-
   sed -e "s/__SLUG__/$slug/g" \
       -e "s/__AUTH_SECRET__/$auth_secret/g" \
       -e "s/__CRON_SECRET__/$cron_secret/g" \
       -e "s|__IMAGE__|$image|g" \
       -e "s|__LICENSE_REFRESH_TOKEN__|$license_refresh_token|g" \
-      -e "s|__LICENSE_PUBLIC_KEY__|$license_public_key|g" \
       "$TEMPLATE" > "$CLIENTS_DIR/$slug.yml"
 
   # Re-apply custom domains if any

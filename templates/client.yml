@@ -30,7 +30,6 @@ services:
       - NOTIFICATION_FROM_EMAIL=${NOTIFICATION_FROM_EMAIL}
       - LICENSE_SERVER_URL=http://dashboard:4000
       - LICENSE_REFRESH_TOKEN=__LICENSE_REFRESH_TOKEN__
-      - LICENSE_PUBLIC_KEY=__LICENSE_PUBLIC_KEY__
     labels:
       - traefik.enable=true
       - traefik.http.routers.__SLUG__.rule=Host(`__SLUG__.app.agentcenter.cloud`)
