@@ -3,8 +3,13 @@ import { NextRequest, NextResponse } from "next/server";
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Allow login page and auth API
-  if (pathname === "/login" || pathname.startsWith("/api/auth")) {
+  // Allow login page, auth API, and public license endpoints
+  // License endpoints are called by client apps for activation/token refresh
+  if (
+    pathname === "/login" ||
+    pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/license/")
+  ) {
     return NextResponse.next();
   }
 
