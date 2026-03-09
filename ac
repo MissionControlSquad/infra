@@ -104,23 +104,14 @@ cmd_create() {
   auth_secret=$(openssl rand -hex 32)
   cron_secret=$(openssl rand -hex 32)
 
-  # 4. Issue license via dashboard API (or use placeholder if dashboard not running)
-  local license_refresh_token="__PENDING__"
+  # 4. Issue license
+  local license_refresh_token
   echo "  Issuing license..."
-  local dashboard_url="http://localhost:4000"
-  local license_response
-  if license_response=$(curl -sf -X POST "$dashboard_url/api/clients/$slug/license" \
-       -H "Content-Type: application/json" \
-       -H "Cookie: admin_session=$(cat "$INFRA_DIR/.admin_session" 2>/dev/null || echo '')" \
-       -d "{\"plan\":\"starter\"}" 2>/dev/null); then
-    license_refresh_token=$(echo "$license_response" | jq -r '.refreshToken // "__PENDING__"')
-    if [ "$license_refresh_token" != "__PENDING__" ]; then
-      echo "  License issued (starter plan)"
-    else
-      echo "  Warning: Could not extract refresh token — use dashboard to issue license"
-    fi
+  license_refresh_token=$(issue_license_token "$slug" "$name" "starter")
+  if [ "$license_refresh_token" = "__PENDING__" ]; then
+    echo "  Warning: Could not issue license — run './ac issue-license $slug starter' after dashboard is up"
   else
-    echo "  Warning: Dashboard not reachable — issue license from dashboard after creation"
+    echo "  License issued (starter plan)"
   fi
 
   # 5. Generate compose file from template
@@ -540,6 +531,84 @@ cmd_set_plan() {
   cmd_features "$slug"
 }
 
+# ── License Helpers ──────────────────────────────────────────────────
+
+# Issue a license token using the Node.js helper script.
+# Runs inside the dashboard container which has the RSA keys.
+# Returns the refresh token or "__PENDING__" on failure.
+issue_license_token() {
+  local slug="$1" org="$2" plan="${3:-starter}"
+  local script="$INFRA_DIR/scripts/issue-license.js"
+
+  if [ ! -f "$script" ]; then
+    echo "__PENDING__"
+    return
+  fi
+
+  local result
+  if result=$(node "$script" "$slug" "$org" "$plan" 2>/dev/null); then
+    echo "$result" | jq -r '.refreshToken // "__PENDING__"'
+  else
+    echo "__PENDING__"
+  fi
+}
+
+cmd_issue_license() {
+  local slug plan
+  slug=$(require_slug "${1:-}")
+  plan="${2:-starter}"
+
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+  [[ "$plan" =~ ^(starter|pro|enterprise)$ ]] || die "Invalid plan: $plan. Use: starter, pro, enterprise"
+
+  local name
+  name=$(jq -r ".\"$slug\".name // \"$slug\"" "$REGISTRY")
+
+  bold "Issuing $plan license for $slug..."
+
+  local refresh_token
+  refresh_token=$(issue_license_token "$slug" "$name" "$plan")
+
+  if [ "$refresh_token" = "__PENDING__" ]; then
+    die "Failed to issue license. Make sure the keys directory exists and is writable."
+  fi
+
+  # Update registry with the refresh token
+  local tmp
+  tmp=$(mktemp)
+  jq --arg slug "$slug" --arg lic "$refresh_token" \
+     '.[$slug].licenseRefreshToken = $lic' \
+     "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
+
+  # Check client type (hosted vs self-hosted)
+  local client_type
+  client_type=$(jq -r ".\"$slug\".type // \"hosted\"" "$REGISTRY")
+
+  if [ "$client_type" = "self-hosted" ]; then
+    echo ""
+    green "License issued for self-hosted client '$slug'"
+    echo ""
+    bold "Give this token to the client to activate:"
+    echo ""
+    echo "  $refresh_token"
+    echo ""
+  else
+    # Hosted: inject token into compose and restart
+    echo "  Regenerating compose file..."
+    local version image
+    version=$(jq -r ".\"$slug\".version // \"latest\"" "$REGISTRY")
+    image=$(resolve_image "$version")
+    regenerate_compose "$slug" "$image"
+
+    echo "  Restarting container..."
+    compose_client "$slug" up -d "app-$slug"
+
+    green "License issued and applied for hosted client '$slug'"
+    echo "  Plan: $plan"
+    echo "  The container will auto-activate on startup."
+  fi
+}
+
 cmd_help() {
   cat <<'EOF'
 AgentCenter.Cloud — Per-Client Deployment CLI
@@ -558,6 +627,10 @@ Commands:
   upgrade <slug> --version <tag>  Upgrade a client to a specific version
   refresh-env [slug|--all]        Regenerate compose files with latest env vars
   status                          Show system resource usage
+
+  issue-license <slug> [plan]      Issue a license (starter|pro|enterprise)
+                                    Hosted: injects token and restarts container
+                                    Self-hosted: prints token to give to client
 
   features <slug>                 List feature flags for a client
   enable <slug> <feature>         Enable a feature for a client
@@ -601,6 +674,7 @@ case "$COMMAND" in
   enable)      cmd_enable "$@" ;;
   disable)     cmd_disable "$@" ;;
   set-plan)    cmd_set_plan "$@" ;;
+  issue-license) cmd_issue_license "$@" ;;
   help|--help|-h) cmd_help ;;
   *) die "Unknown command: $COMMAND. Run './ac help' for usage." ;;
 esac
