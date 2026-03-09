@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated, verifyPassword } from "@/lib/auth";
 import { getClient } from "@/lib/registry";
-import { deleteClient, getContainerStatus, getContainerStats, getTableStats } from "@/lib/shell";
+import { deleteClient, getContainerStatus, getContainerStats, getTableStats, getClientUsage } from "@/lib/shell";
+import { getLicense, getActivationForLicense } from "@/lib/license";
 
 export async function GET(
   _req: NextRequest,
@@ -17,17 +18,47 @@ export async function GET(
     return NextResponse.json({ error: "Client not found" }, { status: 404 });
   }
 
+  const isHosted = (client.type || "hosted") === "hosted";
+  const license = getLicense(slug);
+  const activation = license ? getActivationForLicense(license.id) : null;
+
   return NextResponse.json({
     slug,
     name: client.name,
-    status: getContainerStatus(slug),
-    stats: getContainerStats(slug),
+    type: client.type || "hosted",
+    status: isHosted ? getContainerStatus(slug) : null,
+    stats: isHosted ? getContainerStats(slug) : null,
     url: `https://${slug}.app.agentcenter.cloud`,
-    database: `client_${slug}`,
+    database: isHosted ? `client_${slug}` : null,
     createdAt: client.createdAt,
     domains: client.domains ?? [],
     version: client.version || "latest",
-    tables: getTableStats(slug),
+    tables: isHosted ? getTableStats(slug) : [],
+    usage: isHosted ? getClientUsage(slug) : null,
+    license: license
+      ? {
+          id: license.id,
+          plan: license.plan,
+          active: license.active,
+          maxAgents: license.maxAgents,
+          maxProjects: license.maxProjects,
+          maxSeats: license.maxSeats,
+          features: license.features,
+          issuedAt: license.issuedAt,
+          revokedReason: license.revokedReason,
+        }
+      : null,
+    activation: activation
+      ? {
+          instanceId: activation.instanceId,
+          fingerprint: activation.fingerprint,
+          ipAddress: activation.ipAddress,
+          appVersion: activation.appVersion,
+          activatedAt: activation.activatedAt,
+          lastHeartbeatAt: activation.lastHeartbeatAt,
+          status: activation.status,
+        }
+      : null,
   });
 }
 

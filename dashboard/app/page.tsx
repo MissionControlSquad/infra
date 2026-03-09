@@ -6,9 +6,27 @@ import { useRouter } from "next/navigation";
 interface Client {
   slug: string;
   name: string;
-  status: "running" | "stopped" | "not found";
+  type: "hosted" | "self-hosted";
+  status: "running" | "stopped" | "not found" | null;
   url: string;
   createdAt: string;
+  license: {
+    plan: string;
+    active: boolean;
+    issuedAt: string;
+    revokedReason?: string;
+  } | null;
+  lastActiveAt: string | null;
+}
+
+interface ClientStats {
+  total: number;
+  hosted: number;
+  selfHosted: number;
+  licensed: number;
+  activeLicenses: number;
+  revokedLicenses: number;
+  byPlan: Record<string, number>;
 }
 
 interface Container {
@@ -28,6 +46,7 @@ interface SystemStats {
 
 export default function HomePage() {
   const [clients, setClients] = useState<Client[]>([]);
+  const [clientStats, setClientStats] = useState<ClientStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -36,11 +55,14 @@ export default function HomePage() {
   useEffect(() => {
     fetch("/api/clients")
       .then((r) => {
-        if (!r.ok) return [];
+        if (!r.ok) return null;
         return r.json();
       })
       .then((data) => {
-        if (Array.isArray(data)) setClients(data);
+        if (data && Array.isArray(data.clients)) {
+          setClients(data.clients);
+          setClientStats(data.stats ?? null);
+        }
       })
       .finally(() => setLoading(false));
 
@@ -82,6 +104,17 @@ export default function HomePage() {
       const data = await res.json();
       alert(data.error || "Failed to restart");
     }
+  }
+
+  function timeAgo(dateStr: string): string {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
   }
 
   return (
@@ -146,6 +179,56 @@ export default function HomePage() {
         )}
       </div>
 
+      {/* Client Stats */}
+      {clientStats && (
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold mb-4">License &amp; Client Stats</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+              <p className="text-xs text-zinc-400 uppercase tracking-wider mb-1">Total Clients</p>
+              <p className="text-xl font-semibold">{clientStats.total}</p>
+            </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+              <p className="text-xs text-zinc-400 uppercase tracking-wider mb-1">Hosted / Self-Hosted</p>
+              <p className="text-xl font-semibold">
+                {clientStats.hosted} / {clientStats.selfHosted}
+              </p>
+            </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+              <p className="text-xs text-zinc-400 uppercase tracking-wider mb-1">Active / Revoked</p>
+              <p className="text-xl font-semibold">
+                <span className="text-emerald-400">{clientStats.activeLicenses}</span>
+                {" / "}
+                <span className="text-red-400">{clientStats.revokedLicenses}</span>
+              </p>
+            </div>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+              <p className="text-xs text-zinc-400 uppercase tracking-wider mb-1">By Plan</p>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {Object.entries(clientStats.byPlan).length > 0 ? (
+                  Object.entries(clientStats.byPlan).map(([plan, count]) => (
+                    <span
+                      key={plan}
+                      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                        plan === "enterprise"
+                          ? "bg-amber-500/10 text-amber-400"
+                          : plan === "pro"
+                          ? "bg-blue-500/10 text-blue-400"
+                          : "bg-zinc-700/50 text-zinc-400"
+                      }`}
+                    >
+                      {plan}: {count}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-zinc-500 text-sm">None</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Clients */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Clients</h1>
@@ -169,10 +252,11 @@ export default function HomePage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-900/50 text-zinc-400 text-left">
-                <th className="px-4 py-3 font-medium">Slug</th>
-                <th className="px-4 py-3 font-medium">Name</th>
+                <th className="px-4 py-3 font-medium">Client</th>
+                <th className="px-4 py-3 font-medium">Type</th>
                 <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">URL</th>
+                <th className="px-4 py-3 font-medium">Plan</th>
+                <th className="px-4 py-3 font-medium">Last Active</th>
                 <th className="px-4 py-3 font-medium">Created</th>
                 <th className="px-4 py-3 font-medium text-right">Actions</th>
               </tr>
@@ -183,33 +267,79 @@ export default function HomePage() {
                   key={c.slug}
                   className="border-b border-zinc-800/50 hover:bg-zinc-900/30"
                 >
-                  <td className="px-4 py-3 font-mono">{c.slug}</td>
-                  <td className="px-4 py-3">{c.name}</td>
+                  <td className="px-4 py-3">
+                    <div>
+                      <span className="font-medium text-zinc-200">{c.name}</span>
+                      <span className="text-zinc-500 font-mono text-xs ml-2">{c.slug}</span>
+                    </div>
+                  </td>
                   <td className="px-4 py-3">
                     <span
-                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
-                        c.status === "running"
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : "bg-red-500/10 text-red-400"
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                        c.type === "self-hosted"
+                          ? "bg-purple-500/10 text-purple-400"
+                          : "bg-blue-500/10 text-blue-400"
                       }`}
                     >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          c.status === "running" ? "bg-emerald-400" : "bg-red-400"
-                        }`}
-                      />
-                      {c.status}
+                      {c.type === "self-hosted" ? "Self-Hosted" : "Hosted"}
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <a
-                      href={c.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-400 hover:underline"
-                    >
-                      {c.slug}.app...
-                    </a>
+                    {c.type === "self-hosted" ? (
+                      c.license ? (
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+                            c.license.active
+                              ? "bg-emerald-500/10 text-emerald-400"
+                              : "bg-red-500/10 text-red-400"
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              c.license.active ? "bg-emerald-400" : "bg-red-400"
+                            }`}
+                          />
+                          {c.license.active ? "licensed" : "revoked"}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500 text-xs">no license</span>
+                      )
+                    ) : (
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+                          c.status === "running"
+                            ? "bg-emerald-500/10 text-emerald-400"
+                            : "bg-red-500/10 text-red-400"
+                        }`}
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            c.status === "running" ? "bg-emerald-400" : "bg-red-400"
+                          }`}
+                        />
+                        {c.status}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {c.license ? (
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                          c.license.plan === "enterprise"
+                            ? "bg-amber-500/10 text-amber-400"
+                            : c.license.plan === "pro"
+                            ? "bg-blue-500/10 text-blue-400"
+                            : "bg-zinc-700/50 text-zinc-400"
+                        }`}
+                      >
+                        {c.license.plan}
+                      </span>
+                    ) : (
+                      <span className="text-zinc-600 text-xs">-</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-zinc-400 text-xs">
+                    {c.lastActiveAt ? timeAgo(c.lastActiveAt) : "-"}
                   </td>
                   <td className="px-4 py-3 text-zinc-400">
                     {new Date(c.createdAt).toLocaleDateString()}
@@ -221,12 +351,14 @@ export default function HomePage() {
                     >
                       View
                     </button>
-                    <button
-                      onClick={() => handleRestart(c.slug)}
-                      className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 rounded transition-colors cursor-pointer"
-                    >
-                      Restart
-                    </button>
+                    {c.type === "hosted" && (
+                      <button
+                        onClick={() => handleRestart(c.slug)}
+                        className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 rounded transition-colors cursor-pointer"
+                      >
+                        Restart
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(c.slug)}
                       className="px-2 py-1 text-xs bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded transition-colors cursor-pointer"

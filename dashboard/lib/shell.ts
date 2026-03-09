@@ -2,6 +2,19 @@ import { execSync } from "child_process";
 import crypto from "crypto";
 import path from "path";
 
+// ── SQL / shell-safety helpers ──────────────────────────────────
+/** Escape a value for inclusion inside a single-quoted SQL literal (doubles single quotes). */
+function escapeSqlLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/** Validate that a slug contains only lowercase alphanumeric characters and hyphens. */
+function assertValidSlug(slug: string): void {
+  if (!/^[a-z0-9-]+$/.test(slug)) {
+    throw new Error(`Invalid slug: "${slug}" — only [a-z0-9-] allowed`);
+  }
+}
+
 // In Docker: cwd is /app, ac is at /app/ac, clients/ and templates/ mounted under /app
 // In dev: cwd is dashboard/, ac is at ../ac
 const INFRA_DIR = process.env.NODE_ENV === "production"
@@ -9,13 +22,14 @@ const INFRA_DIR = process.env.NODE_ENV === "production"
   : path.resolve(process.cwd(), "..");
 const AC_PATH = path.join(INFRA_DIR, "ac");
 
-function run(command: string, timeout = 30_000): string {
+function run(command: string, timeout = 30_000, env?: Record<string, string>): string {
   try {
     return execSync(command, {
       cwd: INFRA_DIR,
       timeout,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      env: env ? { ...process.env, ...env } : undefined,
     }).trim();
   } catch (err: unknown) {
     const e = err as { stderr?: string; stdout?: string; message?: string };
@@ -91,11 +105,12 @@ export function listAvailableVersions(): VersionInfo[] {
 
   try {
     const raw = run(
-      `curl -sf -H "Authorization: Bearer ${token}" ` +
+      `curl -sf -H "Authorization: Bearer $GHCR_AUTH_TOKEN" ` +
       `"https://api.github.com/orgs/${owner}/packages/container/agentcenter-app/versions?per_page=50" 2>/dev/null || ` +
-      `curl -sf -H "Authorization: Bearer ${token}" ` +
+      `curl -sf -H "Authorization: Bearer $GHCR_AUTH_TOKEN" ` +
       `"https://api.github.com/users/${owner}/packages/container/agentcenter-app/versions?per_page=50"`,
-      15_000
+      15_000,
+      { GHCR_AUTH_TOKEN: token }
     );
     const data = JSON.parse(raw);
     const versions: VersionInfo[] = [];
@@ -126,9 +141,10 @@ export function listAvailableVersions(): VersionInfo[] {
 function fetchReleaseMessages(owner: string, token: string): Record<string, string> {
   try {
     const raw = run(
-      `curl -sf -H "Authorization: Bearer ${token}" ` +
+      `curl -sf -H "Authorization: Bearer $GHCR_AUTH_TOKEN" ` +
       `"https://api.github.com/repos/${owner}/agentcenter-app/releases?per_page=50"`,
-      15_000
+      15_000,
+      { GHCR_AUTH_TOKEN: token }
     );
     const releases = JSON.parse(raw);
     const map: Record<string, string> = {};
@@ -141,6 +157,26 @@ function fetchReleaseMessages(owner: string, token: string): Record<string, stri
     return map;
   } catch {
     return {};
+  }
+}
+
+export function getClientUsage(slug: string): { agents: number; projects: number; seats: number } | null {
+  assertValidSlug(slug);
+  const db = `client_${slug}`;
+  try {
+    const raw = run(
+      `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -t -A -c "SELECT (SELECT COUNT(*) FROM agents), (SELECT COUNT(*) FROM projects), (SELECT COUNT(*) FROM admin_users)"`,
+      10_000
+    );
+    const parts = raw.split("|");
+    if (parts.length < 3) return null;
+    return {
+      agents: parseInt(parts[0], 10) || 0,
+      projects: parseInt(parts[1], 10) || 0,
+      seats: parseInt(parts[2], 10) || 0,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -157,6 +193,7 @@ export function listDatabases(): string[] {
 }
 
 export function getTableStats(slug: string): { table: string; count: number }[] {
+  assertValidSlug(slug);
   const db = `client_${slug}`;
   try {
     const raw = run(
@@ -173,6 +210,7 @@ export function getTableStats(slug: string): { table: string; count: number }[] 
 }
 
 export function getAdminUsers(slug: string): { id: string; username: string }[] {
+  assertValidSlug(slug);
   const db = `client_${slug}`;
   try {
     const raw = run(
@@ -189,11 +227,15 @@ export function getAdminUsers(slug: string): { id: string; username: string }[] 
 }
 
 export function insertResetToken(slug: string, tokenHash: string, adminUserId: string, expiresAt: string): void {
+  assertValidSlug(slug);
   const db = `client_${slug}`;
   const id = crypto.randomUUID();
+  const safeTokenHash = escapeSqlLiteral(tokenHash);
+  const safeAdminUserId = escapeSqlLiteral(adminUserId);
+  const safeExpiresAt = escapeSqlLiteral(expiresAt);
   // createdById = adminUserId (self-service from infra)
   run(
-    `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -c "INSERT INTO password_reset_tokens (id, \\"tokenHash\\", \\"adminUserId\\", \\"createdById\\", \\"expiresAt\\", \\"createdAt\\") VALUES ('${id}', '${tokenHash}', '${adminUserId}', '${adminUserId}', '${expiresAt}', NOW())"`,
+    `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -c "INSERT INTO password_reset_tokens (id, \\"tokenHash\\", \\"adminUserId\\", \\"createdById\\", \\"expiresAt\\", \\"createdAt\\") VALUES ('${id}', '${safeTokenHash}', '${safeAdminUserId}', '${safeAdminUserId}', '${safeExpiresAt}', NOW())"`,
     10_000
   );
 }
@@ -208,6 +250,7 @@ export interface FeatureFlagInfo {
 }
 
 export function getFeatureFlags(slug: string): FeatureFlagInfo[] {
+  assertValidSlug(slug);
   const db = `client_${slug}`;
   try {
     const raw = run(
@@ -229,10 +272,12 @@ export function getFeatureFlags(slug: string): FeatureFlagInfo[] {
 }
 
 export function setFeatureFlag(slug: string, key: string, enabled: boolean): string {
+  assertValidSlug(slug);
   const db = `client_${slug}`;
   const val = enabled ? "true" : "false";
+  const safeKey = escapeSqlLiteral(key);
   run(
-    `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -c "UPDATE feature_flags SET enabled = ${val}, \\"updatedAt\\" = NOW() WHERE key = '${key}'"`,
+    `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -c "UPDATE feature_flags SET enabled = ${val}, \\"updatedAt\\" = NOW() WHERE key = '${safeKey}'"`,
     10_000
   );
 
@@ -248,6 +293,28 @@ export function setFeatureFlag(slug: string, key: string, enabled: boolean): str
 
 export function setClientPlan(slug: string, plan: string): string {
   return run(`${AC_PATH} set-plan ${slug} ${plan}`, 30_000);
+}
+
+/**
+ * Trigger an immediate license token refresh on a client's container.
+ * Uses the client's CRON_SECRET for authentication (same internal secret).
+ * The container is reachable via Docker network: agentcenter-app-{slug}-1:3000
+ */
+export function triggerLicenseRefresh(slug: string, cronSecret: string): { success: boolean; message: string } {
+  try {
+    const containerHost = `agentcenter-app-${slug}-1`;
+    const result = run(
+      `curl -sf -X POST "http://${containerHost}:3000/api/license/refresh" ` +
+      `-H "Authorization: Bearer ${cronSecret}" ` +
+      `-H "Content-Type: application/json"`,
+      10_000
+    );
+    const data = JSON.parse(result);
+    return { success: data.success ?? true, message: data.message || "Refreshed" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Failed to trigger refresh";
+    return { success: false, message: msg };
+  }
 }
 
 export function listContainers(): { name: string; status: string; image: string }[] {

@@ -55,6 +55,11 @@ services:
   dashboard:
     image: ghcr.io/missioncontrolsquad/agentcenter-dashboard:latest
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       AC_HOST_DIR: /opt/agentcenter

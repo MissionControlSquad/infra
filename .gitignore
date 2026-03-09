@@ -4,3 +4,5 @@ clients/*.yml
 dashboard/.next
 dashboard/node_modules
 dashboard/dist
+keys/
+data/

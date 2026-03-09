@@ -104,15 +104,35 @@ cmd_create() {
   auth_secret=$(openssl rand -hex 32)
   cron_secret=$(openssl rand -hex 32)
 
-  # 4. Generate compose file from template
+  # 4. Issue license via dashboard API (or use placeholder if dashboard not running)
+  local license_refresh_token="__PENDING__"
+  echo "  Issuing license..."
+  local dashboard_url="http://localhost:4000"
+  local license_response
+  if license_response=$(curl -sf -X POST "$dashboard_url/api/clients/$slug/license" \
+       -H "Content-Type: application/json" \
+       -H "Cookie: admin_session=$(cat "$INFRA_DIR/.admin_session" 2>/dev/null || echo '')" \
+       -d "{\"plan\":\"starter\"}" 2>/dev/null); then
+    license_refresh_token=$(echo "$license_response" | jq -r '.refreshToken // "__PENDING__"')
+    if [ "$license_refresh_token" != "__PENDING__" ]; then
+      echo "  License issued (starter plan)"
+    else
+      echo "  Warning: Could not extract refresh token — use dashboard to issue license"
+    fi
+  else
+    echo "  Warning: Dashboard not reachable — issue license from dashboard after creation"
+  fi
+
+  # 5. Generate compose file from template
   echo "  Generating compose file..."
   sed -e "s/__SLUG__/$slug/g" \
       -e "s/__AUTH_SECRET__/$auth_secret/g" \
       -e "s/__CRON_SECRET__/$cron_secret/g" \
       -e "s|__IMAGE__|$image|g" \
+      -e "s|__LICENSE_REFRESH_TOKEN__|$license_refresh_token|g" \
       "$TEMPLATE" > "$CLIENTS_DIR/$slug.yml"
 
-  # 5. Update registry
+  # 6. Update registry
   local tmp
   tmp=$(mktemp)
   jq --arg slug "$slug" \
@@ -124,11 +144,11 @@ cmd_create() {
      '.[$slug] = {name: $name, authSecret: $auth, cronSecret: $cron, createdAt: $date, domains: [], version: $ver}' \
      "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
-  # 6. Start the container
+  # 7. Start the container
   echo "  Starting container..."
   compose_client "$slug" up -d "app-$slug"
 
-  # 7. Seed default feature flags
+  # 8. Seed default feature flags
   echo "  Seeding feature flags..."
   seed_feature_flags "$slug"
 
