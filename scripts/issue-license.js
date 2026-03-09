@@ -74,25 +74,10 @@ function signToken(payload) {
   return `${signingInput}.${signature}`;
 }
 
-// ── Plan Defaults ────────────────────────────────────────────────────
+// ── Plan Defaults (from central plan-config.json) ───────────────────
 
-const PLAN_DEFAULTS = {
-  starter: {
-    maxAgents: 5, maxProjects: 10, maxSeats: 3,
-    features: ["channels", "documents", "agent_queue"],
-  },
-  pro: {
-    maxAgents: 25, maxProjects: 50, maxSeats: 10,
-    features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications"],
-  },
-  enterprise: {
-    maxAgents: -1, maxProjects: -1, maxSeats: -1,
-    features: [
-      "channels", "analytics", "recurring_tasks", "cloud_vms",
-      "reviews", "documents", "agent_queue", "notifications",
-    ],
-  },
-};
+const PLAN_CONFIG_PATH = path.join(__dirname, "plan-config.json");
+const PLAN_DEFAULTS = JSON.parse(fs.readFileSync(PLAN_CONFIG_PATH, "utf-8")).plans;
 
 // ── Registry ─────────────────────────────────────────────────────────
 

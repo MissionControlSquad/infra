@@ -88,34 +88,59 @@ export interface RefreshTokenPayload {
   // No exp — valid as long as subscription is active in registry
 }
 
-// ── Plan Defaults ───────────────────────────────────────────────
+// ── Plan Defaults (loaded from central plan-config.json) ────────
 
-const PLAN_DEFAULTS: Record<string, { maxAgents: number; maxProjects: number; maxSeats: number; features: string[] }> = {
-  starter: {
-    maxAgents: 5,
-    maxProjects: 10,
-    maxSeats: 3,
-    features: ["channels", "documents", "agent_queue"],
-  },
-  pro: {
-    maxAgents: 25,
-    maxProjects: 50,
-    maxSeats: 10,
-    features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications"],
-  },
-  enterprise: {
-    maxAgents: -1,
-    maxProjects: -1,
-    maxSeats: -1,
-    features: [
-      "channels", "analytics", "recurring_tasks", "cloud_vms",
-      "reviews", "documents", "agent_queue", "notifications",
-    ],
-  },
-};
+interface PlanDefaults {
+  maxAgents: number;
+  maxProjects: number;
+  maxSeats: number;
+  features: string[];
+}
 
-export function getPlanDefaults(plan: string) {
-  return PLAN_DEFAULTS[plan] ?? PLAN_DEFAULTS.starter;
+interface PlanConfig {
+  plans: Record<string, PlanDefaults>;
+  allFeatures: { key: string; description: string; managedBy: string }[];
+}
+
+function loadPlanConfig(): PlanConfig {
+  // In production (Docker): mounted at /app/scripts/plan-config.json
+  // In dev: at ../scripts/plan-config.json
+  const configPath = process.env.NODE_ENV === "production"
+    ? path.join(process.cwd(), "scripts/plan-config.json")
+    : path.resolve(process.cwd(), "../scripts/plan-config.json");
+
+  try {
+    return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  } catch {
+    // Fallback if config file not found
+    return {
+      plans: {
+        starter: { maxAgents: 5, maxProjects: 10, maxSeats: 3, features: ["channels", "documents", "agent_queue"] },
+        pro: { maxAgents: 25, maxProjects: 50, maxSeats: 10, features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications"] },
+        enterprise: { maxAgents: -1, maxProjects: -1, maxSeats: -1, features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications"] },
+      },
+      allFeatures: [],
+    };
+  }
+}
+
+let _planConfig: PlanConfig | null = null;
+function getPlanConfig(): PlanConfig {
+  if (!_planConfig) _planConfig = loadPlanConfig();
+  return _planConfig;
+}
+
+export function getPlanDefaults(plan: string): PlanDefaults {
+  const config = getPlanConfig();
+  return config.plans[plan] ?? config.plans.starter;
+}
+
+export function getAllPlanNames(): string[] {
+  return Object.keys(getPlanConfig().plans);
+}
+
+export function getAllFeatureDefinitions() {
+  return getPlanConfig().allFeatures;
 }
 
 // ── Token Signing & Verification ────────────────────────────────
@@ -463,6 +488,16 @@ export function updateLicensePlan(
   registry[slug].maxSeats = overrides?.maxSeats ?? defaults.maxSeats;
   registry[slug].features = overrides?.features ?? defaults.features;
 
+  writeLicenseRegistry(registry);
+  return registry[slug];
+}
+
+/** Update just the features array on an existing license */
+export function updateLicenseFeatures(slug: string, features: string[]): LicenseEntry | null {
+  const registry = readLicenseRegistry();
+  if (!registry[slug]) return null;
+
+  registry[slug].features = features;
   writeLicenseRegistry(registry);
   return registry[slug];
 }

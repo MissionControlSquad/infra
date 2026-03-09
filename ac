@@ -434,9 +434,9 @@ psql_client() {
 
 seed_feature_flags() {
   local slug="$1"
-  # Create the feature_flags table and insert defaults if the table doesn't exist yet.
-  # The app's Prisma migration will create it normally, but this ensures flags are available
-  # immediately after creation before the first app boot completes migrations.
+  local config="$INFRA_DIR/scripts/plan-config.json"
+
+  # Create the feature_flags table if it doesn't exist yet.
   psql_client "$slug" -c "
     CREATE TABLE IF NOT EXISTS feature_flags (
       id TEXT PRIMARY KEY,
@@ -446,17 +446,23 @@ seed_feature_flags() {
       description TEXT,
       \"updatedAt\" TIMESTAMP(3) NOT NULL DEFAULT NOW()
     );
-    INSERT INTO feature_flags (id, key, enabled, \"managedBy\", description, \"updatedAt\") VALUES
-      (gen_random_uuid()::text, 'channels',        true,  'system', 'Team messaging channels and DMs',             NOW()),
-      (gen_random_uuid()::text, 'analytics',       true,  'system', 'Analytics dashboard with charts and metrics',  NOW()),
-      (gen_random_uuid()::text, 'recurring_tasks', true,  'system', 'Recurring/scheduled task templates',           NOW()),
-      (gen_random_uuid()::text, 'cloud_vms',       false, 'system', 'Cloud VM provisioning for agents',             NOW()),
-      (gen_random_uuid()::text, 'reviews',         true,  'system', 'Task review workflow (approve/reject/clarify)',NOW()),
-      (gen_random_uuid()::text, 'documents',       true,  'system', 'Document management and project docs',         NOW()),
-      (gen_random_uuid()::text, 'agent_queue',     true,  'user',   'Agent work queue management',                  NOW()),
-      (gen_random_uuid()::text, 'notifications',   true,  'user',   'Push and email notifications',                 NOW())
-    ON CONFLICT (key) DO NOTHING;
   " 2>/dev/null
+
+  # Generate INSERT from plan-config.json
+  if [ -f "$config" ]; then
+    local insert_sql
+    insert_sql=$(jq -r '
+      .allFeatures | map(
+        "(gen_random_uuid()::text, \(.key | @json), true, \(.managedBy | @json), \(.description | @json), NOW())"
+      ) | join(",\n      ")
+    ' "$config")
+
+    psql_client "$slug" -c "
+      INSERT INTO feature_flags (id, key, enabled, \"managedBy\", description, \"updatedAt\") VALUES
+      $insert_sql
+      ON CONFLICT (key) DO NOTHING;
+    " 2>/dev/null
+  fi
 }
 
 notify_flag_change() {
@@ -515,28 +521,28 @@ cmd_disable() {
 }
 
 # Sync DB feature flags to match a license plan.
-# Enables flags included in the plan, disables the rest.
-# Plan → features mapping matches dashboard/lib/license.ts PLAN_DEFAULTS
+# Reads plan features from the central plan-config.json.
+# Enables flags included in the plan, disables the rest (system-managed only).
 sync_plan_flags() {
   local slug="$1" plan="$2"
+  local config="$INFRA_DIR/scripts/plan-config.json"
 
-  case "$plan" in
-    starter)
-      # channels, documents, agent_queue
-      psql_client "$slug" -c "UPDATE feature_flags SET enabled = (key IN ('channels', 'documents', 'agent_queue')), \"updatedAt\" = NOW() WHERE \"managedBy\" = 'system'" 2>/dev/null
-      ;;
-    pro)
-      # channels, documents, agent_queue, reviews, recurring_tasks, notifications
-      psql_client "$slug" -c "UPDATE feature_flags SET enabled = (key IN ('channels', 'documents', 'agent_queue', 'reviews', 'recurring_tasks', 'notifications')), \"updatedAt\" = NOW() WHERE \"managedBy\" = 'system'" 2>/dev/null
-      ;;
-    enterprise)
-      # everything
-      psql_client "$slug" -c "UPDATE feature_flags SET enabled = true, \"updatedAt\" = NOW() WHERE \"managedBy\" = 'system'" 2>/dev/null
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  if [ ! -f "$config" ]; then
+    echo "  Warning: plan-config.json not found, skipping flag sync"
+    return 1
+  fi
+
+  # Read features for this plan from config
+  local features_csv
+  features_csv=$(jq -r ".plans.\"$plan\".features // [] | map(\"'\" + . + \"'\") | join(\",\")" "$config")
+
+  if [ -z "$features_csv" ]; then
+    echo "  Warning: No features found for plan '$plan'"
+    return 1
+  fi
+
+  # Enable features in the plan, disable the rest (only system-managed flags)
+  psql_client "$slug" -c "UPDATE feature_flags SET enabled = (key IN ($features_csv)), \"updatedAt\" = NOW() WHERE \"managedBy\" = 'system'" 2>/dev/null
 
   notify_flag_change "$slug"
 }

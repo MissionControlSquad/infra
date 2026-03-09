@@ -1,0 +1,32 @@
+{
+  "plans": {
+    "starter": {
+      "maxAgents": 5,
+      "maxProjects": 10,
+      "maxSeats": 3,
+      "features": ["channels", "documents", "agent_queue"]
+    },
+    "pro": {
+      "maxAgents": 25,
+      "maxProjects": 50,
+      "maxSeats": 10,
+      "features": ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications"]
+    },
+    "enterprise": {
+      "maxAgents": -1,
+      "maxProjects": -1,
+      "maxSeats": -1,
+      "features": ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications"]
+    }
+  },
+  "allFeatures": [
+    { "key": "channels",        "description": "Team messaging channels and DMs",              "managedBy": "system" },
+    { "key": "analytics",       "description": "Analytics dashboard with charts and metrics",   "managedBy": "system" },
+    { "key": "recurring_tasks", "description": "Recurring/scheduled task templates",            "managedBy": "system" },
+    { "key": "cloud_vms",       "description": "Cloud VM provisioning for agents",              "managedBy": "system" },
+    { "key": "reviews",         "description": "Task review workflow (approve/reject/clarify)", "managedBy": "system" },
+    { "key": "documents",       "description": "Document management and project docs",          "managedBy": "system" },
+    { "key": "agent_queue",     "description": "Agent work queue management",                   "managedBy": "user" },
+    { "key": "notifications",   "description": "Push and email notifications",                  "managedBy": "user" }
+  ]
+}
