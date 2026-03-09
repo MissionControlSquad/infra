@@ -334,10 +334,29 @@ cmd_upgrade() {
 
 regenerate_compose() {
   local slug="$1" image="$2"
-  local auth_secret cron_secret license_refresh_token license_public_key
+  local auth_secret cron_secret license_refresh_token
   auth_secret=$(jq -r ".\"$slug\".authSecret" "$REGISTRY")
   cron_secret=$(jq -r ".\"$slug\".cronSecret" "$REGISTRY")
   license_refresh_token=$(jq -r ".\"$slug\".licenseRefreshToken // \"__PENDING__\"" "$REGISTRY")
+
+  # Auto-issue license for hosted clients that don't have one yet
+  if [ "$license_refresh_token" = "__PENDING__" ] || [ -z "$license_refresh_token" ]; then
+    local name
+    name=$(jq -r ".\"$slug\".name // \"$slug\"" "$REGISTRY")
+    echo "  No license found — issuing starter license..."
+    license_refresh_token=$(issue_license_token "$slug" "$name" "starter")
+    if [ "$license_refresh_token" != "__PENDING__" ]; then
+      # Store token in registry
+      local tmp
+      tmp=$(mktemp)
+      jq --arg slug "$slug" --arg lic "$license_refresh_token" \
+         '.[$slug].licenseRefreshToken = $lic' \
+         "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
+      echo "  License issued (starter plan)"
+    else
+      echo "  Warning: Could not issue license"
+    fi
+  fi
 
   sed -e "s/__SLUG__/$slug/g" \
       -e "s/__AUTH_SECRET__/$auth_secret/g" \

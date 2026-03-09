@@ -253,6 +253,7 @@ export function activateLicense(
   );
 
   if (existing) {
+    // Same fingerprint — simple re-activation (same container restarted)
     if (existing.fingerprint === fingerprint) {
       existing.lastHeartbeatAt = new Date().toISOString();
       existing.ipAddress = ipAddress;
@@ -261,17 +262,22 @@ export function activateLicense(
       return { instanceId: existing.instanceId, activated: true, message: "Re-activated on same instance" };
     }
 
-    const lastBeat = new Date(existing.lastHeartbeatAt).getTime();
-    const now = Date.now();
-    if (now - lastBeat < STALE_THRESHOLD_MS) {
-      return {
-        instanceId: "",
-        activated: false,
-        message: `License already active on another instance (${existing.instanceId}). Last heartbeat ${Math.round((now - lastBeat) / 60_000)}min ago.`,
-      };
+    // Same IP (Docker network) — likely a container rebuild/upgrade, allow it
+    if (existing.ipAddress === ipAddress) {
+      existing.status = "inactive";
+    } else {
+      // Different IP — enforce stale threshold to prevent concurrent use
+      const lastBeat = new Date(existing.lastHeartbeatAt).getTime();
+      const now = Date.now();
+      if (now - lastBeat < STALE_THRESHOLD_MS) {
+        return {
+          instanceId: "",
+          activated: false,
+          message: `License already active on another instance (${existing.instanceId}). Last heartbeat ${Math.round((now - lastBeat) / 60_000)}min ago.`,
+        };
+      }
+      existing.status = "inactive";
     }
-
-    existing.status = "inactive";
   }
 
   const instanceId = `inst_${crypto.randomBytes(8).toString("hex")}`;
