@@ -470,8 +470,9 @@ notify_flag_change() {
   local cron_secret
   cron_secret=$(jq -r ".\"$slug\".cronSecret" "$REGISTRY")
   # Invalidate the app's in-memory flag cache via REST endpoint
+  # Use wget (available in Alpine) since curl may not be installed in the app container
   docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T "app-$slug" \
-    curl -sf -X POST -H "Authorization: Bearer $cron_secret" http://127.0.0.1:3000/api/feature-flags/invalidate 2>/dev/null || true
+    wget -qO- --header="Authorization: Bearer $cron_secret" --post-data="" http://127.0.0.1:3000/api/feature-flags/invalidate 2>/dev/null || true
 }
 
 cmd_features() {
