@@ -62,7 +62,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Check subscription active
+    // 3. Verify this is the current refresh token (not a replaced/reissued one)
+    if (license.refreshToken !== refreshToken) {
+      return NextResponse.json(
+        { error: "This license key has been replaced — please use the new key", code: "TOKEN_SUPERSEDED" },
+        { status: 401 },
+      );
+    }
+
+    // 4. Check subscription active
     if (!license.active) {
       return NextResponse.json(
         {
@@ -73,7 +81,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Activate instance (one-instance enforcement)
+    // 5. Activate instance (one-instance enforcement)
     const result = activateLicense(
       payload.lid,
       fingerprint,
@@ -88,7 +96,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 5. Generate first access token
+    // 6. Generate first access token
     const accessToken = generateAccessToken(license);
 
     return NextResponse.json({

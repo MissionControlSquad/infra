@@ -63,7 +63,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Check subscription is still active
+    // 3. Verify this is the current refresh token (not a replaced/reissued one)
+    if (license.refreshToken !== refreshToken) {
+      return NextResponse.json(
+        { error: "Refresh token has been superseded — please re-activate with the new token", code: "TOKEN_SUPERSEDED" },
+        { status: 401 },
+      );
+    }
+
+    // 4. Check subscription is still active
     if (!license.active) {
       return NextResponse.json(
         {
@@ -76,7 +84,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Generate new access token (24h)
+    // 5. Generate new access token (24h)
     const accessToken = generateAccessToken(license);
 
     return NextResponse.json({
