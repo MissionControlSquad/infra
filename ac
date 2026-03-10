@@ -593,19 +593,13 @@ cmd_set_plan() {
 # ── License Helpers ──────────────────────────────────────────────────
 
 # Issue a license token using the Node.js helper script.
-# Runs inside the dashboard container which has the RSA keys.
+# Runs inside the dashboard container which has the RSA keys and registry.
 # Returns the refresh token or "__PENDING__" on failure.
 issue_license_token() {
   local slug="$1" org="$2" plan="${3:-starter}"
-  local script="$INFRA_DIR/scripts/issue-license.js"
-
-  if [ ! -f "$script" ]; then
-    echo "__PENDING__"
-    return
-  fi
 
   local result
-  if result=$(node "$script" "$slug" "$org" "$plan" 2>/dev/null); then
+  if result=$(compose exec -T dashboard node /app/scripts/issue-license.js "$slug" "$org" "$plan" 2>/dev/null); then
     echo "$result" | jq -r '.refreshToken // "__PENDING__"'
   else
     echo "__PENDING__"
@@ -629,7 +623,7 @@ cmd_issue_license() {
   refresh_token=$(issue_license_token "$slug" "$name" "$plan")
 
   if [ "$refresh_token" = "__PENDING__" ]; then
-    die "Failed to issue license. Make sure the keys directory exists and is writable."
+    die "Failed to issue license. Make sure the dashboard container is running."
   fi
 
   # Update registry with the refresh token

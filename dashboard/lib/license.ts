@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { syncRefreshTokenToRegistry } from "./registry";
 
 // ── RSA Key Management ─────────────────────────────────────────
 
@@ -432,6 +433,9 @@ export function issueLicense(
   registry[slug] = entry;
   writeLicenseRegistry(registry);
 
+  // Keep host registry in sync so compose files get the new token
+  syncRefreshTokenToRegistry(slug, refreshToken);
+
   const accessToken = generateAccessToken(entry);
 
   return { entry, refreshToken, accessToken };
@@ -511,6 +515,9 @@ export function reissueRefreshToken(slug: string): { refreshToken: string; licen
   const refreshToken = generateRefreshToken(entry.id, slug);
   entry.refreshToken = refreshToken;
   writeLicenseRegistry(registry);
+
+  // Keep host registry in sync so compose files get the new token
+  syncRefreshTokenToRegistry(slug, refreshToken);
 
   // Old token shouldn't work anymore — deactivate all instances so client must re-activate
   deactivateAllForLicense(entry.id);

@@ -32,6 +32,22 @@ export function getClient(slug: string): ClientEntry | null {
   return reg[slug] ?? null;
 }
 
+/**
+ * Sync the license refresh token to the host registry so compose files
+ * can inject it as LICENSE_REFRESH_TOKEN env var into client containers.
+ */
+export function syncRefreshTokenToRegistry(slug: string, refreshToken: string): void {
+  try {
+    const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
+    const registry = JSON.parse(raw);
+    if (!registry[slug]) return;
+    registry[slug].licenseRefreshToken = refreshToken;
+    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  } catch {
+    // Non-fatal — compose regeneration will pick up the token from license registry
+  }
+}
+
 export function registerClient(slug: string, name: string, type: "hosted" | "self-hosted"): ClientEntry {
   const registry = readRegistry();
 
