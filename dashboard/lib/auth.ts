@@ -10,17 +10,36 @@ function getSecret(): string {
   return pw;
 }
 
+/**
+ * Derive a separate HMAC key from the password using scrypt.
+ * This ensures the session signing key is not the raw password,
+ * so even if sessions are analyzed, the password itself isn't exposed.
+ */
+let derivedKey: Buffer | null = null;
+function getSigningKey(): Buffer {
+  if (derivedKey) return derivedKey;
+  derivedKey = crypto.scryptSync(getSecret(), "agentcenter-session-signing", 32);
+  return derivedKey;
+}
+
 function sign(value: string): string {
-  const hmac = crypto.createHmac("sha256", getSecret());
+  const hmac = crypto.createHmac("sha256", getSigningKey());
   hmac.update(value);
   return `${value}.${hmac.digest("hex")}`;
 }
 
+/**
+ * Verify a session token using constant-time comparison
+ * to prevent timing attacks.
+ */
 function verify(token: string): boolean {
   const lastDot = token.lastIndexOf(".");
   if (lastDot === -1) return false;
   const value = token.substring(0, lastDot);
-  return sign(value) === token;
+  const expected = sign(value);
+
+  if (expected.length !== token.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(token));
 }
 
 export async function setSessionCookie(): Promise<void> {
@@ -48,6 +67,11 @@ export async function isAuthenticated(): Promise<boolean> {
   return verify(token);
 }
 
+/**
+ * Verify password using constant-time comparison to prevent timing attacks.
+ */
 export function verifyPassword(password: string): boolean {
-  return password === getSecret();
+  const secret = getSecret();
+  if (password.length !== secret.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(password), Buffer.from(secret));
 }
