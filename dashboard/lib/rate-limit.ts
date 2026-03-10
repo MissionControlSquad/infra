@@ -61,14 +61,23 @@ export function createRateLimiter(maxRequests: number, windowMs: number) {
 }
 
 /**
- * Extract the client IP address from request headers.
- * Checks x-forwarded-for, x-real-ip, then falls back to "unknown".
+ * Extract the real client IP from request headers.
+ *
+ * Prefers X-Real-IP (set by Traefik, not spoofable) over X-Forwarded-For.
+ * For X-Forwarded-For, takes the rightmost entry (the one appended by the
+ * closest trusted proxy) rather than the leftmost (which a client can spoof).
  */
 export function getClientIp(req: { headers: { get(name: string): string | null } }): string {
+  // X-Real-IP: single value set by reverse proxy (most reliable)
+  const realIp = req.headers.get("x-real-ip");
+  if (realIp) return realIp.trim();
+
+  // X-Forwarded-For: take rightmost entry (appended by trusted proxy)
   const forwarded = req.headers.get("x-forwarded-for");
   if (forwarded) {
-    // x-forwarded-for can be a comma-separated list; take the first entry
-    return forwarded.split(",")[0].trim();
+    const parts = forwarded.split(",");
+    return parts[parts.length - 1].trim();
   }
-  return req.headers.get("x-real-ip") || "unknown";
+
+  return "unknown";
 }
