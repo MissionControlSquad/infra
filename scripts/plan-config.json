@@ -10,13 +10,13 @@
       "maxAgents": 25,
       "maxProjects": 50,
       "maxSeats": 10,
-      "features": ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications"]
+      "features": ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications", "live_gateway"]
     },
     "enterprise": {
       "maxAgents": -1,
       "maxProjects": -1,
       "maxSeats": -1,
-      "features": ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications"]
+      "features": ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications", "live_gateway"]
     }
   },
   "allFeatures": [
@@ -27,6 +27,7 @@
     { "key": "reviews",         "description": "Task review workflow (approve/reject/clarify)", "managedBy": "system" },
     { "key": "documents",       "description": "Document management and project docs",          "managedBy": "system" },
     { "key": "agent_queue",     "description": "Agent work queue management",                   "managedBy": "user" },
-    { "key": "notifications",   "description": "Push and email notifications",                  "managedBy": "user" }
+    { "key": "notifications",   "description": "Push and email notifications",                  "managedBy": "user" },
+    { "key": "live_gateway",    "description": "Real-time live gateway for streaming updates",  "managedBy": "system" }
   ]
 }
