@@ -117,8 +117,8 @@ function loadPlanConfig(): PlanConfig {
     return {
       plans: {
         starter: { maxAgents: 5, maxProjects: 10, maxSeats: 3, features: ["channels", "documents", "agent_queue"] },
-        pro: { maxAgents: 25, maxProjects: 50, maxSeats: 10, features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications"] },
-        enterprise: { maxAgents: -1, maxProjects: -1, maxSeats: -1, features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications"] },
+        pro: { maxAgents: 25, maxProjects: 50, maxSeats: 10, features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications", "live_gateway"] },
+        enterprise: { maxAgents: -1, maxProjects: -1, maxSeats: -1, features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications", "live_gateway"] },
       },
       allFeatures: [],
     };

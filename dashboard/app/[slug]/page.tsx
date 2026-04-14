@@ -857,14 +857,14 @@ export default function ClientDetailPage({
                   key: "pro" as const,
                   label: "Pro",
                   agents: 25, projects: 50, seats: 10,
-                  features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications"],
+                  features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications", "live_gateway"],
                   color: "blue",
                 },
                 {
                   key: "enterprise" as const,
                   label: "Enterprise",
                   agents: -1, projects: -1, seats: -1,
-                  features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications"],
+                  features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications", "live_gateway"],
                   color: "amber",
                 },
               ]).map((plan) => {
