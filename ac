@@ -329,6 +329,10 @@ cmd_upgrade() {
   echo "  Restarting container..."
   compose_client "$slug" up -d "app-$slug"
 
+  # 6. Seed any missing feature flags (ON CONFLICT DO NOTHING keeps existing rows intact)
+  echo "  Syncing feature flags..."
+  seed_feature_flags "$slug"
+
   green "Client '$slug' upgraded to version $version"
 }
 
