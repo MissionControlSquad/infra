@@ -63,6 +63,23 @@ resolve_image() {
   fi
 }
 
+# Insert Traefik labels for a custom domain into a compose file.
+# Labels are inserted before the # END_LABELS placeholder so the file stays valid YAML.
+insert_domain_labels() {
+  local file="$1" router_name="$2" domain="$3"
+  local tmp
+  tmp=$(mktemp)
+  awk -v router="$router_name" -v domain="$domain" '
+    /      # END_LABELS/ {
+      print "      - traefik.http.routers." router ".rule=Host(`" domain "`)"
+      print "      - traefik.http.routers." router ".entrypoints=websecure"
+      print "      - traefik.http.routers." router ".tls.certresolver=letsencrypt"
+      print "      - traefik.http.services." router ".loadbalancer.server.port=3000"
+    }
+    { print }
+  ' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
 # ── Commands ─────────────────────────────────────────────────────────
 
 cmd_create() {
@@ -96,7 +113,7 @@ cmd_create() {
 
   # 2. Create database
   echo "  Creating database client_$slug..."
-  docker compose -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
+  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
     psql -U postgres -c "CREATE DATABASE client_$slug;" 2>/dev/null || true
 
   # 3. Generate secrets
@@ -133,7 +150,8 @@ cmd_create() {
      --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
      --arg ver "$version" \
      --arg lic "$license_refresh_token" \
-     '.[$slug] = {name: $name, authSecret: $auth, cronSecret: $cron, licenseRefreshToken: $lic, createdAt: $date, domains: [], version: $ver}' \
+     --arg plan "starter" \
+     '.[$slug] = {name: $name, authSecret: $auth, cronSecret: $cron, licenseRefreshToken: $lic, createdAt: $date, domains: [], version: $ver, plan: $plan}' \
      "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
   # 7. Start the container
@@ -143,6 +161,10 @@ cmd_create() {
   # 8. Seed default feature flags
   echo "  Seeding feature flags..."
   seed_feature_flags "$slug"
+
+  # 9. Enforce starter plan limits (seed inserts everything as true; sync corrects it)
+  echo "  Applying starter plan limits..."
+  sync_plan_flags "$slug" "starter"
 
   green "Client '$slug' created!"
   echo "  URL: https://$slug.app.agentcenter.cloud"
@@ -170,22 +192,34 @@ cmd_delete() {
 
   bold "Deleting client: $slug"
 
-  # 1. Stop container
+  # 1. Stop and remove container
   echo "  Stopping container..."
   compose_client "$slug" stop "app-$slug" 2>/dev/null || true
   compose_client "$slug" rm -f "app-$slug" 2>/dev/null || true
 
-  # 2. Rename database to free up the slug (keeps data as backup)
+  # 2. Remove client data volume
+  echo "  Removing data volume..."
+  local vol
+  vol=$(docker volume ls -q --filter "name=app_data__${slug}" 2>/dev/null | head -1)
+  if [ -n "$vol" ]; then
+    docker volume rm "$vol" 2>/dev/null || echo "  Warning: could not remove volume $vol — remove manually"
+  fi
+
+  # 3. Rename database to free up the slug (keeps data as backup)
   local ts
   ts=$(date -u +%Y%m%d%H%M%S)
   echo "  Renaming database client_$slug → deleted_${slug}_${ts}..."
-  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
-    psql -U postgres -c "ALTER DATABASE client_$slug RENAME TO deleted_${slug}_${ts};" 2>/dev/null || true
+  if ! docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
+    psql -U postgres -c "ALTER DATABASE client_$slug RENAME TO deleted_${slug}_${ts};" 2>/dev/null; then
+    echo "  Warning: Could not rename database — it may have active connections."
+    echo "  Data preserved as 'client_$slug'. Rename manually when safe:"
+    echo "    ALTER DATABASE client_$slug RENAME TO deleted_${slug}_${ts};"
+  fi
 
-  # 3. Remove compose file
+  # 4. Remove compose file
   rm -f "$CLIENTS_DIR/$slug.yml"
 
-  # 4. Remove from registry
+  # 5. Remove from registry
   local tmp
   tmp=$(mktemp)
   jq --arg slug "$slug" 'del(.[$slug])' "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
@@ -200,21 +234,29 @@ cmd_list() {
     return
   fi
 
-  printf "  %-20s %-25s %-10s %s\n" "SLUG" "NAME" "STATUS" "CREATED"
-  printf "  %-20s %-25s %-10s %s\n" "----" "----" "------" "-------"
+  printf "  %-20s %-25s %-10s %-12s %s\n" "SLUG" "NAME" "STATUS" "PLAN" "CREATED"
+  printf "  %-20s %-25s %-10s %-12s %s\n" "----" "----" "------" "----" "-------"
 
   for slug in $(jq -r 'keys[]' "$REGISTRY"); do
-    local name created status
+    local name created plan status cid
     name=$(jq -r ".\"$slug\".name" "$REGISTRY")
     created=$(jq -r ".\"$slug\".createdAt" "$REGISTRY")
-    status=$(docker inspect --format='{{.State.Status}}' "$(docker ps -aq --filter "name=app-$slug" | head -1)" 2>/dev/null || echo "stopped")
-    printf "  %-20s %-25s %-10s %s\n" "$slug" "$name" "$status" "$created"
+    plan=$(jq -r ".\"$slug\".plan // \"unknown\"" "$REGISTRY")
+    # Use exact name match: Docker prepends / to container names internally
+    cid=$(docker ps -aq --filter "name=^/app-${slug}$" 2>/dev/null | head -1)
+    if [ -n "$cid" ]; then
+      status=$(docker inspect --format='{{.State.Status}}' "$cid" 2>/dev/null || echo "unknown")
+    else
+      status="stopped"
+    fi
+    printf "  %-20s %-25s %-10s %-12s %s\n" "$slug" "$name" "$status" "$plan" "$created"
   done
 }
 
 cmd_logs() {
   local slug
   slug=$(require_slug "${1:-}")
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
   compose_client "$slug" logs -f "app-$slug"
 }
 
@@ -234,19 +276,19 @@ cmd_add_domain() {
   [ -n "$domain" ] || die "Usage: $0 add-domain <slug> <domain>"
   [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
 
+  # Check for duplicate domain
+  local already
+  already=$(jq -r ".\"$slug\".domains // [] | .[]" "$REGISTRY" | grep -Fx "$domain" || true)
+  [ -n "$already" ] && die "Domain '$domain' is already added to $slug"
+
   bold "Adding domain $domain to $slug..."
 
-  # Add Traefik labels for custom domain
+  # router_name must be unique and valid: replace dots and underscores with hyphens
   local router_name
-  router_name=$(echo "$domain" | tr '.' '-')
+  router_name=$(echo "$domain" | tr '._' '-')
 
-  cat >> "$CLIENTS_DIR/$slug.yml" <<EOF
-    # Custom domain: $domain
-      - traefik.http.routers.${router_name}.rule=Host(\`${domain}\`)
-      - traefik.http.routers.${router_name}.entrypoints=websecure
-      - traefik.http.routers.${router_name}.tls.certresolver=letsencrypt
-      - traefik.http.services.${router_name}.loadbalancer.server.port=3000
-EOF
+  # Insert labels into the labels section before the END_LABELS placeholder
+  insert_domain_labels "$CLIENTS_DIR/$slug.yml" "$router_name" "$domain"
 
   # Update registry
   local tmp
@@ -274,15 +316,31 @@ cmd_update() {
   if [ "$target" = "--all" ]; then
     bold "Restarting all clients..."
     for slug in $(jq -r 'keys[]' "$REGISTRY"); do
-      echo "  Restarting $slug..."
+      echo "  Updating $slug..."
       compose_client "$slug" up -d "app-$slug"
+      seed_feature_flags "$slug"
+      local plan
+      plan=$(jq -r ".\"$slug\".plan // empty" "$REGISTRY")
+      if [ -n "$plan" ]; then
+        sync_plan_flags "$slug" "$plan"
+      else
+        echo "  Warning: no plan set for $slug — skipping flag sync. Run './ac set-plan $slug <plan>' to fix."
+      fi
     done
   else
     local slug
     slug=$(require_slug "$target")
     [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
-    echo "  Restarting $slug..."
+    echo "  Updating $slug..."
     compose_client "$slug" up -d "app-$slug"
+    seed_feature_flags "$slug"
+    local plan
+    plan=$(jq -r ".\"$slug\".plan // empty" "$REGISTRY")
+    if [ -n "$plan" ]; then
+      sync_plan_flags "$slug" "$plan"
+    else
+      echo "  Warning: no plan set for $slug — skipping flag sync. Run './ac set-plan $slug <plan>' to fix."
+    fi
   fi
 
   green "Update complete."
@@ -325,13 +383,23 @@ cmd_upgrade() {
      '.[$slug].version = $ver' \
      "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
-  # 5. Restart container with new image
+  # 4. Restart container with new image
   echo "  Restarting container..."
   compose_client "$slug" up -d "app-$slug"
 
-  # 6. Seed any missing feature flags (ON CONFLICT DO NOTHING keeps existing rows intact)
-  echo "  Syncing feature flags..."
+  # 5. Seed any missing feature flags (ON CONFLICT DO NOTHING keeps existing rows intact)
+  echo "  Seeding new feature flags..."
   seed_feature_flags "$slug"
+
+  # 6. Re-enforce plan limits so new flags get the correct enabled state
+  echo "  Syncing plan flags..."
+  local plan
+  plan=$(jq -r ".\"$slug\".plan // empty" "$REGISTRY")
+  if [ -n "$plan" ]; then
+    sync_plan_flags "$slug" "$plan"
+  else
+    echo "  Warning: no plan set for $slug — skipping flag sync. Run './ac set-plan $slug <plan>' to fix."
+  fi
 
   green "Client '$slug' upgraded to version $version"
 }
@@ -339,8 +407,12 @@ cmd_upgrade() {
 regenerate_compose() {
   local slug="$1" image="$2"
   local auth_secret cron_secret license_refresh_token
-  auth_secret=$(jq -r ".\"$slug\".authSecret" "$REGISTRY")
-  cron_secret=$(jq -r ".\"$slug\".cronSecret" "$REGISTRY")
+
+  auth_secret=$(jq -r ".\"$slug\".authSecret // empty" "$REGISTRY")
+  cron_secret=$(jq -r ".\"$slug\".cronSecret // empty" "$REGISTRY")
+  [ -n "$auth_secret" ] || die "Missing authSecret for '$slug' in registry — registry may be corrupt"
+  [ -n "$cron_secret" ] || die "Missing cronSecret for '$slug' in registry — registry may be corrupt"
+
   license_refresh_token=$(jq -r ".\"$slug\".licenseRefreshToken // \"__PENDING__\"" "$REGISTRY")
 
   # Auto-issue license for hosted clients that don't have one yet
@@ -350,7 +422,6 @@ regenerate_compose() {
     echo "  No license found — issuing starter license..."
     license_refresh_token=$(issue_license_token "$slug" "$name" "starter")
     if [ "$license_refresh_token" != "__PENDING__" ]; then
-      # Store token in registry
       local tmp
       tmp=$(mktemp)
       jq --arg slug "$slug" --arg lic "$license_refresh_token" \
@@ -369,19 +440,13 @@ regenerate_compose() {
       -e "s|__LICENSE_REFRESH_TOKEN__|$license_refresh_token|g" \
       "$TEMPLATE" > "$CLIENTS_DIR/$slug.yml"
 
-  # Re-apply custom domains if any
+  # Re-apply custom domains if any — inserted into the labels section
   local domains
   domains=$(jq -r ".\"$slug\".domains // [] | .[]" "$REGISTRY")
   for domain in $domains; do
     local router_name
-    router_name=$(echo "$domain" | tr '.' '-')
-    cat >> "$CLIENTS_DIR/$slug.yml" <<EOF
-    # Custom domain: $domain
-      - traefik.http.routers.${router_name}.rule=Host(\`${domain}\`)
-      - traefik.http.routers.${router_name}.entrypoints=websecure
-      - traefik.http.routers.${router_name}.tls.certresolver=letsencrypt
-      - traefik.http.services.${router_name}.loadbalancer.server.port=3000
-EOF
+    router_name=$(echo "$domain" | tr '._' '-')
+    insert_domain_labels "$CLIENTS_DIR/$slug.yml" "$router_name" "$domain"
   done
 }
 
@@ -427,7 +492,7 @@ cmd_status() {
 
   echo "  Clients: $(jq 'length' "$REGISTRY")"
   echo "  Disk (PG volume):"
-  docker system df -v 2>/dev/null | grep pg_data || echo "  (not found)"
+  docker system df -v 2>/dev/null | grep "agentcenter_pg_data" || echo "  (not found)"
 }
 
 psql_client() {
@@ -452,7 +517,9 @@ seed_feature_flags() {
     );
   " 2>/dev/null
 
-  # Generate INSERT from plan-config.json
+  # Insert any flags not yet in the DB (ON CONFLICT DO NOTHING preserves existing state).
+  # Note: enabled=true here is intentional — sync_plan_flags is always called after seeding
+  # to correct the enabled state according to the client's plan.
   if [ -f "$config" ]; then
     local insert_sql
     insert_sql=$(jq -r '
@@ -473,10 +540,11 @@ notify_flag_change() {
   local slug="$1"
   local cron_secret
   cron_secret=$(jq -r ".\"$slug\".cronSecret" "$REGISTRY")
-  # Invalidate the app's in-memory flag cache via REST endpoint
-  # Use wget (available in Alpine) since curl may not be installed in the app container
-  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T "app-$slug" \
-    wget -qO- --header="Authorization: Bearer $cron_secret" --post-data="" http://127.0.0.1:3000/api/feature-flags/invalidate 2>/dev/null || true
+  # Invalidate the app's in-memory flag cache via REST endpoint.
+  # compose_client ensures app-$slug service is resolvable (it's defined in the client yml).
+  compose_client "$slug" exec -T "app-$slug" \
+    wget -qO- --header="Authorization: Bearer $cron_secret" --post-data="" \
+    http://127.0.0.1:3000/api/feature-flags/invalidate 2>/dev/null || true
 }
 
 cmd_features() {
@@ -504,8 +572,15 @@ cmd_enable() {
   [ -n "$feature" ] || die "Usage: $0 enable <slug> <feature>"
   [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
 
-  psql_client "$slug" -c \
-    "UPDATE feature_flags SET enabled = true, \"updatedAt\" = NOW() WHERE key = '$feature'" 2>/dev/null
+  local rows
+  rows=$(psql_client "$slug" -t -A -v key="$feature" -c "
+    WITH upd AS (
+      UPDATE feature_flags SET enabled = true, \"updatedAt\" = NOW()
+      WHERE key = :'key' RETURNING 1
+    ) SELECT COUNT(*) FROM upd;
+  " 2>/dev/null || echo "0")
+
+  [ "${rows:-0}" -eq 0 ] && die "Feature '$feature' not found for client '$slug'"
 
   notify_flag_change "$slug"
   green "Feature '$feature' enabled for $slug"
@@ -518,8 +593,15 @@ cmd_disable() {
   [ -n "$feature" ] || die "Usage: $0 disable <slug> <feature>"
   [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
 
-  psql_client "$slug" -c \
-    "UPDATE feature_flags SET enabled = false, \"updatedAt\" = NOW() WHERE key = '$feature'" 2>/dev/null
+  local rows
+  rows=$(psql_client "$slug" -t -A -v key="$feature" -c "
+    WITH upd AS (
+      UPDATE feature_flags SET enabled = false, \"updatedAt\" = NOW()
+      WHERE key = :'key' RETURNING 1
+    ) SELECT COUNT(*) FROM upd;
+  " 2>/dev/null || echo "0")
+
+  [ "${rows:-0}" -eq 0 ] && die "Feature '$feature' not found for client '$slug'"
 
   notify_flag_change "$slug"
   green "Feature '$feature' disabled for $slug"
@@ -537,7 +619,6 @@ sync_plan_flags() {
     return 1
   fi
 
-  # Read features for this plan from config
   local features_csv
   features_csv=$(jq -r ".plans.\"$plan\".features // [] | map(\"'\" + . + \"'\") | join(\",\")" "$config")
 
@@ -546,8 +627,13 @@ sync_plan_flags() {
     return 1
   fi
 
-  # Enable features in the plan, disable the rest (only system-managed flags)
-  psql_client "$slug" -c "UPDATE feature_flags SET enabled = (key IN ($features_csv)), \"updatedAt\" = NOW() WHERE \"managedBy\" = 'system'" 2>/dev/null
+  # Enable flags in the plan, disable the rest — system-managed flags only.
+  # User-managed flags are left untouched so users retain manual control.
+  psql_client "$slug" -c "
+    UPDATE feature_flags
+    SET enabled = (key IN ($features_csv)), \"updatedAt\" = NOW()
+    WHERE \"managedBy\" = 'system';
+  " 2>/dev/null
 
   notify_flag_change "$slug"
 }
@@ -567,9 +653,15 @@ cmd_set_plan() {
   local refresh_token
   refresh_token=$(issue_license_token "$slug" "$name" "$plan")
 
+  # Always persist the new plan in registry, whether or not license issuance succeeded
+  local tmp
+  tmp=$(mktemp)
+  jq --arg slug "$slug" --arg plan "$plan" \
+     '.[$slug].plan = $plan' \
+     "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
+
   if [ "$refresh_token" != "__PENDING__" ]; then
-    # Store new token in registry
-    local tmp
+    # Store new license token in registry
     tmp=$(mktemp)
     jq --arg slug "$slug" --arg lic "$refresh_token" \
        '.[$slug].licenseRefreshToken = $lic' \
@@ -630,11 +722,11 @@ cmd_issue_license() {
     die "Failed to issue license. Make sure the dashboard container is running."
   fi
 
-  # Update registry with the refresh token
+  # Update registry with the refresh token and plan
   local tmp
   tmp=$(mktemp)
-  jq --arg slug "$slug" --arg lic "$refresh_token" \
-     '.[$slug].licenseRefreshToken = $lic' \
+  jq --arg slug "$slug" --arg lic "$refresh_token" --arg plan "$plan" \
+     '.[$slug].licenseRefreshToken = $lic | .[$slug].plan = $plan' \
      "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
   # Check client type (hosted vs self-hosted)
@@ -689,7 +781,7 @@ Commands:
   refresh-env [slug|--all]        Regenerate compose files with latest env vars
   status                          Show system resource usage
 
-  issue-license <slug> [plan]      Issue a license (starter|pro|enterprise)
+  issue-license <slug> [plan]     Issue a license (starter|pro|enterprise)
                                     Hosted: injects token and restarts container
                                     Self-hosted: prints token to give to client
 
@@ -722,20 +814,20 @@ COMMAND="${1:-help}"
 shift || true
 
 case "$COMMAND" in
-  create)     cmd_create "$@" ;;
-  delete)     cmd_delete "$@" ;;
-  list)       cmd_list ;;
-  logs)       cmd_logs "$@" ;;
-  restart)    cmd_restart "$@" ;;
-  add-domain) cmd_add_domain "$@" ;;
-  update)     cmd_update "$@" ;;
-  upgrade)     cmd_upgrade "$@" ;;
-  refresh-env) cmd_refresh_env "$@" ;;
-  status)      cmd_status ;;
-  features)    cmd_features "$@" ;;
-  enable)      cmd_enable "$@" ;;
-  disable)     cmd_disable "$@" ;;
-  set-plan)    cmd_set_plan "$@" ;;
+  create)        cmd_create "$@" ;;
+  delete)        cmd_delete "$@" ;;
+  list)          cmd_list ;;
+  logs)          cmd_logs "$@" ;;
+  restart)       cmd_restart "$@" ;;
+  add-domain)    cmd_add_domain "$@" ;;
+  update)        cmd_update "$@" ;;
+  upgrade)       cmd_upgrade "$@" ;;
+  refresh-env)   cmd_refresh_env "$@" ;;
+  status)        cmd_status ;;
+  features)      cmd_features "$@" ;;
+  enable)        cmd_enable "$@" ;;
+  disable)       cmd_disable "$@" ;;
+  set-plan)      cmd_set_plan "$@" ;;
   issue-license) cmd_issue_license "$@" ;;
   help|--help|-h) cmd_help ;;
   *) die "Unknown command: $COMMAND. Run './ac help' for usage." ;;

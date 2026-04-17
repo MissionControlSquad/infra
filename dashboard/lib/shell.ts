@@ -273,22 +273,11 @@ export function getFeatureFlags(slug: string): FeatureFlagInfo[] {
 
 export function setFeatureFlag(slug: string, key: string, enabled: boolean): string {
   assertValidSlug(slug);
-  const db = `client_${slug}`;
-  const val = enabled ? "true" : "false";
-  const safeKey = escapeSqlLiteral(key);
-  run(
-    `docker exec agentcenter-postgres-1 psql -U postgres -d ${db} -c "UPDATE feature_flags SET enabled = ${val}, \\"updatedAt\\" = NOW() WHERE key = '${safeKey}'"`,
-    10_000
-  );
-
-  // Invalidate app cache
-  try {
-    run(`${AC_PATH} enable ${slug} _noop 2>/dev/null || true`, 5_000);
-  } catch {
-    // Best effort
+  if (!/^[a-z][a-z_]*$/.test(key)) {
+    throw new Error(`Invalid feature key: "${key}" — only [a-z_] allowed`);
   }
-
-  return `Feature '${key}' ${enabled ? "enabled" : "disabled"} for ${slug}`;
+  const cmd = enabled ? "enable" : "disable";
+  return run(`${AC_PATH} ${cmd} ${slug} ${key}`, 10_000);
 }
 
 export function setClientPlan(slug: string, plan: string): string {
