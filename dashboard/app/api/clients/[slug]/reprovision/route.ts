@@ -21,6 +21,15 @@ export async function POST(
     return NextResponse.json({ error: "Client not found" }, { status: 404 });
   }
 
+  // Guard 1: only retry tenants that are explicitly in failed state
+  if (client.provisioningStatus !== "failed") {
+    return NextResponse.json(
+      { error: "Client is not in a failed state", provisioningStatus: client.provisioningStatus },
+      { status: 409 }
+    );
+  }
+
+  // Guard 2: cap total provisioning attempts
   const currentAttempts = client.provisioningAttempts ?? 1;
   if (currentAttempts >= MAX_ATTEMPTS) {
     return NextResponse.json(
