@@ -93,11 +93,17 @@ export async function POST(req: NextRequest) {
     const clientType = isSelfHosted ? CLIENT_TYPE.SELF_HOSTED : CLIENT_TYPE.HOSTED;
 
     if (clientType === CLIENT_TYPE.SELF_HOSTED) {
-      // Self-hosted: register in registry only, no container, then issue license
-      const { registerClient } = await import("@/lib/registry");
+      const { registerClient, deleteClient } = await import("@/lib/registry");
       const { issueLicense } = await import("@/lib/license");
       registerClient(slug, name || slug, CLIENT_TYPE.SELF_HOSTED, email);
-      const { refreshToken } = issueLicense(slug, email ?? slug, SELF_HOST_LICENSE_PLAN);
+      let refreshToken: string;
+      try {
+        ({ refreshToken } = issueLicense(slug, email ?? slug, SELF_HOST_LICENSE_PLAN));
+      } catch (licenseErr) {
+        // Roll back the registry entry so the next attempt can retry cleanly
+        deleteClient(slug);
+        throw licenseErr;
+      }
       return NextResponse.json({
         ok: true,
         output: `Self-hosted client "${slug}" registered`,

@@ -147,6 +147,18 @@ export function incrementProvisioningAttempts(slug: string): number {
   }
 }
 
+export function deleteClient(slug: string): void {
+  try {
+    const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
+    const registry = JSON.parse(raw) as Registry;
+    if (!registry[slug]) return;
+    delete registry[slug];
+    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  } catch {
+    // non-fatal
+  }
+}
+
 export function findClientByEmail(email: string): { slug: string; entry: ClientEntry } | null {
   const normalized = email.toLowerCase().trim();
   const registry = readRegistry();
