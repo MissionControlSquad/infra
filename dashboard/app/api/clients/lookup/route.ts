@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated, isApiKeyAuthenticated } from "@/lib/auth";
 import { findClientByEmail, setClientActive, setClientFailed } from "@/lib/registry";
 import { getContainerStatus } from "@/lib/shell";
+import { getLicense } from "@/lib/license";
+import { HOSTED_APP_DOMAIN, CLIENT_TYPE, PROVISIONING_STATUS } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +23,7 @@ export async function GET(req: NextRequest) {
   }
 
   const { slug, entry } = result;
-  const isHosted = (entry.type ?? "hosted") === "hosted";
+  const isHosted = (entry.type ?? CLIENT_TYPE.HOSTED) === CLIENT_TYPE.HOSTED;
   const containerStatus = isHosted ? getContainerStatus(slug) : null;
 
   // Entries without provisioningStatus predate this tracking — treat them as
@@ -30,11 +32,11 @@ export async function GET(req: NextRequest) {
   let provisioningStatus = entry.provisioningStatus;
 
   if (isHosted) {
-    if (containerStatus === "running" && provisioningStatus !== "active") {
+    if (containerStatus === "running" && provisioningStatus !== PROVISIONING_STATUS.ACTIVE) {
       // Container confirmed running — promote to active regardless of previous state
       setClientActive(slug);
-      provisioningStatus = "active";
-    } else if (provisioningStatus === "provisioning") {
+      provisioningStatus = PROVISIONING_STATUS.ACTIVE;
+    } else if (provisioningStatus === PROVISIONING_STATUS.PROVISIONING) {
       // Explicitly in-progress — only check for timeout failure in production.
       // In local dev Docker is unavailable so container status is always "not found",
       // which must not trigger failure detection for real entries.
@@ -43,23 +45,37 @@ export async function GET(req: NextRequest) {
         const TEN_MINUTES = 10 * 60 * 1000;
         if (ageMs > TEN_MINUTES) {
           setClientFailed(slug);
-          provisioningStatus = "failed";
+          provisioningStatus = PROVISIONING_STATUS.FAILED;
         }
       }
     }
   }
 
+  // For self-hosted tenants: look up their active license to get the key they
+  // need to activate their instance on first launch.
+  const clientType = entry.type ?? CLIENT_TYPE.HOSTED;
+  const licenseEntry = clientType === CLIENT_TYPE.SELF_HOSTED ? getLicense(slug) : null;
+  const licenseKey =
+    licenseEntry?.active ? licenseEntry.refreshToken : undefined;
+
+  // Self-hosted clients use their own domain — no agentcenter.cloud URL
+  const url =
+    clientType === CLIENT_TYPE.SELF_HOSTED
+      ? (entry.domains?.[0] ?? null)
+      : `https://${slug}.${HOSTED_APP_DOMAIN}`;
+
   return NextResponse.json({
     found: true,
     slug,
-    url: `https://${slug}.app.agentcenter.cloud`,
+    url,
     name: entry.name,
-    type: entry.type ?? "hosted",
+    type: clientType,
     status: containerStatus,
     // Omitted when undefined so status.ts can distinguish legacy (no field) from
     // explicit "provisioning" / "active" / "failed"
     ...(provisioningStatus !== undefined ? { provisioningStatus } : {}),
     ...(entry.provisioningAttempts !== undefined ? { provisioningAttempts: entry.provisioningAttempts } : {}),
+    ...(licenseKey !== undefined ? { licenseKey } : {}),
     createdAt: entry.createdAt,
   });
 }

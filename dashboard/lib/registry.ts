@@ -1,6 +1,12 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import {
+  CLIENT_TYPE,
+  ClientType,
+  PROVISIONING_STATUS,
+  ProvisioningStatus,
+} from "./constants";
 
 const REGISTRY_PATH = process.env.NODE_ENV === "production"
   ? path.join(process.cwd(), "clients/registry.json")
@@ -8,7 +14,7 @@ const REGISTRY_PATH = process.env.NODE_ENV === "production"
 
 export interface ClientEntry {
   name: string;
-  type: "hosted" | "self-hosted";
+  type: ClientType;
   authSecret: string;
   cronSecret: string;
   createdAt: string;
@@ -17,7 +23,7 @@ export interface ClientEntry {
   licenseRefreshToken?: string;
   email?: string;
   /** Explicit provisioning state so callers know whether creation is still in progress. */
-  provisioningStatus?: "provisioning" | "active" | "failed";
+  provisioningStatus?: ProvisioningStatus;
   provisioningAttempts?: number;
 }
 
@@ -56,7 +62,7 @@ export function syncRefreshTokenToRegistry(slug: string, refreshToken: string): 
 export function registerClient(
   slug: string,
   name: string,
-  type: "hosted" | "self-hosted",
+  type: ClientType,
   email?: string
 ): ClientEntry {
   const registry = readRegistry();
@@ -71,8 +77,9 @@ export function registerClient(
     authSecret: crypto.randomBytes(32).toString("hex"),
     cronSecret: crypto.randomBytes(32).toString("hex"),
     createdAt: new Date().toISOString(),
-    provisioningStatus: "provisioning",
-    provisioningAttempts: 1,
+    // Self-hosted clients manage their own infra — no container to wait for
+    provisioningStatus: type === CLIENT_TYPE.SELF_HOSTED ? PROVISIONING_STATUS.ACTIVE : PROVISIONING_STATUS.PROVISIONING,
+    provisioningAttempts: type === CLIENT_TYPE.SELF_HOSTED ? undefined : 1,
     ...(email ? { email } : {}),
   };
 
@@ -88,10 +95,11 @@ export function setClientEmail(slug: string, email: string): void {
     if (!registry[slug]) return;
     registry[slug].email = email.toLowerCase().trim();
     // `ac create` writes its own entry without provisioningStatus — backfill it
-    if (!registry[slug].provisioningStatus) {
-      registry[slug].provisioningStatus = "provisioning";
+    // Only apply to hosted entries; self-hosted are already active by definition
+    if (!registry[slug].provisioningStatus && registry[slug].type !== CLIENT_TYPE.SELF_HOSTED) {
+      registry[slug].provisioningStatus = PROVISIONING_STATUS.PROVISIONING;
     }
-    if (registry[slug].provisioningAttempts === undefined) {
+    if (registry[slug].provisioningAttempts === undefined && registry[slug].type !== CLIENT_TYPE.SELF_HOSTED) {
       registry[slug].provisioningAttempts = 1;
     }
     fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
@@ -105,7 +113,7 @@ export function setClientActive(slug: string): void {
     const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
     const registry = JSON.parse(raw) as Registry;
     if (!registry[slug]) return;
-    registry[slug].provisioningStatus = "active";
+    registry[slug].provisioningStatus = PROVISIONING_STATUS.ACTIVE;
     fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
   } catch {
     // non-fatal
@@ -117,7 +125,7 @@ export function setClientFailed(slug: string): void {
     const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
     const registry = JSON.parse(raw) as Registry;
     if (!registry[slug]) return;
-    registry[slug].provisioningStatus = "failed";
+    registry[slug].provisioningStatus = PROVISIONING_STATUS.FAILED;
     fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
   } catch {
     // non-fatal
@@ -131,7 +139,7 @@ export function incrementProvisioningAttempts(slug: string): number {
     if (!registry[slug]) return 0;
     const next = (registry[slug].provisioningAttempts ?? 1) + 1;
     registry[slug].provisioningAttempts = next;
-    registry[slug].provisioningStatus = "provisioning";
+    registry[slug].provisioningStatus = PROVISIONING_STATUS.PROVISIONING;
     fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
     return next;
   } catch {

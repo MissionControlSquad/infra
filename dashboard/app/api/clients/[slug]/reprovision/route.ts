@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated, isApiKeyAuthenticated } from "@/lib/auth";
 import { getClient, incrementProvisioningAttempts } from "@/lib/registry";
 import { createClient } from "@/lib/shell";
+import { PROVISIONING_STATUS, TENANT_MAX_RETRY_ATTEMPTS } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
-
-const MAX_ATTEMPTS = 3;
 
 export async function POST(
   req: NextRequest,
@@ -22,7 +21,7 @@ export async function POST(
   }
 
   // Guard 1: only retry tenants that are explicitly in failed state
-  if (client.provisioningStatus !== "failed") {
+  if (client.provisioningStatus !== PROVISIONING_STATUS.FAILED) {
     return NextResponse.json(
       { error: "Client is not in a failed state", provisioningStatus: client.provisioningStatus },
       { status: 409 }
@@ -31,7 +30,7 @@ export async function POST(
 
   // Guard 2: cap total provisioning attempts
   const currentAttempts = client.provisioningAttempts ?? 1;
-  if (currentAttempts >= MAX_ATTEMPTS) {
+  if (currentAttempts >= TENANT_MAX_RETRY_ATTEMPTS) {
     return NextResponse.json(
       { error: "Max provisioning attempts reached. Admin intervention required.", attempts: currentAttempts },
       { status: 429 }

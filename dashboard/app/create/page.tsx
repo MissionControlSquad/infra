@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { CLIENT_TYPE, ClientType } from "@/lib/constants";
 
 export default function CreatePage() {
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
-  const [type, setType] = useState<"hosted" | "self-hosted">("hosted");
+  const [type, setType] = useState<ClientType>(CLIENT_TYPE.HOSTED);
   const [version, setVersion] = useState("");
   const [versions, setVersions] = useState<string[]>([]);
   const [versionDetails, setVersionDetails] = useState<Record<string, { createdAt: string; message?: string }>>({});
@@ -53,7 +54,7 @@ export default function CreatePage() {
         slug: cleanSlug,
         name: name || cleanSlug,
         type,
-        version: type === "hosted" ? (version || undefined) : undefined,
+        version: type === CLIENT_TYPE.HOSTED ? (version || undefined) : undefined,
       }),
     });
 
@@ -83,7 +84,7 @@ export default function CreatePage() {
             className="w-full px-4 py-2.5 bg-zinc-900 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
           />
           <p className="text-xs text-zinc-500 mt-1">
-            {type === "hosted"
+            {type === CLIENT_TYPE.HOSTED
               ? `Used for subdomain: ${slug || "slug"}.app.agentcenter.cloud`
               : "Unique identifier for this self-hosted client"}
           </p>
@@ -105,9 +106,9 @@ export default function CreatePage() {
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={() => setType("hosted")}
+              onClick={() => setType(CLIENT_TYPE.HOSTED)}
               className={`flex-1 px-4 py-3 rounded-lg border text-sm font-medium transition-colors cursor-pointer ${
-                type === "hosted"
+                type === CLIENT_TYPE.HOSTED
                   ? "bg-blue-600/10 border-blue-500 text-blue-400"
                   : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:bg-zinc-800"
               }`}
@@ -117,9 +118,9 @@ export default function CreatePage() {
             </button>
             <button
               type="button"
-              onClick={() => setType("self-hosted")}
+              onClick={() => setType(CLIENT_TYPE.SELF_HOSTED)}
               className={`flex-1 px-4 py-3 rounded-lg border text-sm font-medium transition-colors cursor-pointer ${
-                type === "self-hosted"
+                type === CLIENT_TYPE.SELF_HOSTED
                   ? "bg-purple-600/10 border-purple-500 text-purple-400"
                   : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:bg-zinc-800"
               }`}
@@ -130,7 +131,7 @@ export default function CreatePage() {
           </div>
         </div>
 
-        {type === "hosted" && versions.length > 0 && (
+        {type === CLIENT_TYPE.HOSTED && versions.length > 0 && (
           <div>
             <label className="block text-sm text-zinc-400 mb-1">Version</label>
             <div className="max-h-48 overflow-y-auto border border-zinc-700 rounded-lg divide-y divide-zinc-800">

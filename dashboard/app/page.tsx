@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CLIENT_TYPE, ClientType } from "@/lib/constants";
 
 interface Client {
   slug: string;
   name: string;
-  type: "hosted" | "self-hosted";
+  type: ClientType;
   status: "running" | "stopped" | "not found" | null;
   url: string;
   createdAt: string;
@@ -276,16 +277,16 @@ export default function HomePage() {
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                        c.type === "self-hosted"
+                        c.type === CLIENT_TYPE.SELF_HOSTED
                           ? "bg-purple-500/10 text-purple-400"
                           : "bg-blue-500/10 text-blue-400"
                       }`}
                     >
-                      {c.type === "self-hosted" ? "Self-Hosted" : "Hosted"}
+                      {c.type === CLIENT_TYPE.SELF_HOSTED ? "Self-Hosted" : "Hosted"}
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    {c.type === "self-hosted" ? (
+                    {c.type === CLIENT_TYPE.SELF_HOSTED ? (
                       c.license ? (
                         <span
                           className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -351,7 +352,7 @@ export default function HomePage() {
                     >
                       View
                     </button>
-                    {c.type === "hosted" && (
+                    {c.type === CLIENT_TYPE.HOSTED && (
                       <button
                         onClick={() => handleRestart(c.slug)}
                         className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 rounded transition-colors cursor-pointer"

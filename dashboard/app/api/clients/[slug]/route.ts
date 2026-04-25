@@ -3,6 +3,7 @@ import { isAuthenticated, isApiKeyAuthenticated, verifyPassword } from "@/lib/au
 import { getClient } from "@/lib/registry";
 import { deleteClient, getContainerStatus, getContainerStats, getTableStats, getClientUsage } from "@/lib/shell";
 import { getLicense, getActivationForLicense } from "@/lib/license";
+import { CLIENT_TYPE, HOSTED_APP_DOMAIN } from "@/lib/constants";
 
 export async function GET(
   req: NextRequest,
@@ -18,17 +19,17 @@ export async function GET(
     return NextResponse.json({ error: "Client not found" }, { status: 404 });
   }
 
-  const isHosted = (client.type || "hosted") === "hosted";
+  const isHosted = (client.type || CLIENT_TYPE.HOSTED) === CLIENT_TYPE.HOSTED;
   const license = getLicense(slug);
   const activation = license ? getActivationForLicense(license.id) : null;
 
   return NextResponse.json({
     slug,
     name: client.name,
-    type: client.type || "hosted",
+    type: client.type || CLIENT_TYPE.HOSTED,
     status: isHosted ? getContainerStatus(slug) : null,
     stats: isHosted ? getContainerStats(slug) : null,
-    url: `https://${slug}.app.agentcenter.cloud`,
+    url: `https://${slug}.${HOSTED_APP_DOMAIN}`,
     database: isHosted ? `client_${slug}` : null,
     createdAt: client.createdAt,
     domains: client.domains ?? [],
