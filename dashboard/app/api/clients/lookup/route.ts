@@ -18,7 +18,8 @@ export async function GET(req: NextRequest) {
   }
 
   const email = req.nextUrl.searchParams.get("email");
-  if (!email || !email.includes("@")) {
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!email || !EMAIL_RE.test(email)) {
     return NextResponse.json({ error: "Valid email is required" }, { status: 400 });
   }
 
