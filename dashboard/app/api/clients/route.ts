@@ -88,6 +88,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, output: `Self-hosted client "${slug}" registered` });
     }
 
+    // Guard against duplicate provisioning: block only when an entry for this
+    // email is explicitly in "provisioning" state (creation already in flight).
+    // Allow "failed" and legacy entries through so the user can reprovision.
+    if (email) {
+      const { findClientByEmail } = await import("@/lib/registry");
+      const existing = findClientByEmail(email);
+      if (existing?.entry.provisioningStatus === "provisioning") {
+        return NextResponse.json(
+          { error: "Already provisioning", slug: existing.slug },
+          { status: 409 }
+        );
+      }
+    }
+
     let output: string;
 
     if (process.env.NODE_ENV !== "production") {

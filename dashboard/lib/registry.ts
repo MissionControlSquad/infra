@@ -16,6 +16,9 @@ export interface ClientEntry {
   version?: string;
   licenseRefreshToken?: string;
   email?: string;
+  /** Explicit provisioning state so callers know whether creation is still in progress. */
+  provisioningStatus?: "provisioning" | "active" | "failed";
+  provisioningAttempts?: number;
 }
 
 export type Registry = Record<string, ClientEntry>;
@@ -68,6 +71,8 @@ export function registerClient(
     authSecret: crypto.randomBytes(32).toString("hex"),
     cronSecret: crypto.randomBytes(32).toString("hex"),
     createdAt: new Date().toISOString(),
+    provisioningStatus: "provisioning",
+    provisioningAttempts: 1,
     ...(email ? { email } : {}),
   };
 
@@ -82,9 +87,55 @@ export function setClientEmail(slug: string, email: string): void {
     const registry = JSON.parse(raw) as Registry;
     if (!registry[slug]) return;
     registry[slug].email = email.toLowerCase().trim();
+    // `ac create` writes its own entry without provisioningStatus — backfill it
+    if (!registry[slug].provisioningStatus) {
+      registry[slug].provisioningStatus = "provisioning";
+    }
+    if (registry[slug].provisioningAttempts === undefined) {
+      registry[slug].provisioningAttempts = 1;
+    }
     fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
   } catch {
-    // non-fatal — lookup will fall back to workspaceId
+    // non-fatal
+  }
+}
+
+export function setClientActive(slug: string): void {
+  try {
+    const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
+    const registry = JSON.parse(raw) as Registry;
+    if (!registry[slug]) return;
+    registry[slug].provisioningStatus = "active";
+    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  } catch {
+    // non-fatal
+  }
+}
+
+export function setClientFailed(slug: string): void {
+  try {
+    const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
+    const registry = JSON.parse(raw) as Registry;
+    if (!registry[slug]) return;
+    registry[slug].provisioningStatus = "failed";
+    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  } catch {
+    // non-fatal
+  }
+}
+
+export function incrementProvisioningAttempts(slug: string): number {
+  try {
+    const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
+    const registry = JSON.parse(raw) as Registry;
+    if (!registry[slug]) return 0;
+    const next = (registry[slug].provisioningAttempts ?? 1) + 1;
+    registry[slug].provisioningAttempts = next;
+    registry[slug].provisioningStatus = "provisioning";
+    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+    return next;
+  } catch {
+    return 0;
   }
 }
 
