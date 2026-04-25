@@ -14,6 +14,8 @@ export interface ClientEntry {
   createdAt: string;
   domains?: string[];
   version?: string;
+  licenseRefreshToken?: string;
+  email?: string;
 }
 
 export type Registry = Record<string, ClientEntry>;
@@ -48,7 +50,12 @@ export function syncRefreshTokenToRegistry(slug: string, refreshToken: string): 
   }
 }
 
-export function registerClient(slug: string, name: string, type: "hosted" | "self-hosted"): ClientEntry {
+export function registerClient(
+  slug: string,
+  name: string,
+  type: "hosted" | "self-hosted",
+  email?: string
+): ClientEntry {
   const registry = readRegistry();
 
   if (registry[slug]) {
@@ -61,9 +68,33 @@ export function registerClient(slug: string, name: string, type: "hosted" | "sel
     authSecret: crypto.randomBytes(32).toString("hex"),
     cronSecret: crypto.randomBytes(32).toString("hex"),
     createdAt: new Date().toISOString(),
+    ...(email ? { email } : {}),
   };
 
   registry[slug] = entry;
   fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
   return entry;
+}
+
+export function setClientEmail(slug: string, email: string): void {
+  try {
+    const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
+    const registry = JSON.parse(raw) as Registry;
+    if (!registry[slug]) return;
+    registry[slug].email = email.toLowerCase().trim();
+    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  } catch {
+    // non-fatal — lookup will fall back to workspaceId
+  }
+}
+
+export function findClientByEmail(email: string): { slug: string; entry: ClientEntry } | null {
+  const normalized = email.toLowerCase().trim();
+  const registry = readRegistry();
+  for (const [slug, entry] of Object.entries(registry)) {
+    if (entry.email && entry.email.toLowerCase().trim() === normalized) {
+      return { slug, entry };
+    }
+  }
+  return null;
 }

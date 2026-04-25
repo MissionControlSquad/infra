@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
+import { isAuthenticated, isApiKeyAuthenticated } from "@/lib/auth";
 import { readRegistry } from "@/lib/registry";
 import { getContainerStatus, createClient } from "@/lib/shell";
 import { getLicense, getActivationForLicense } from "@/lib/license";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  if (!(await isAuthenticated())) {
+export async function GET(req: NextRequest) {
+  if (!(await isAuthenticated()) && !isApiKeyAuthenticated(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -59,12 +59,18 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await isAuthenticated())) {
+  if (!(await isAuthenticated()) && !isApiKeyAuthenticated(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const { slug, name, version, type } = await req.json();
+    const { slug, name, version, type, email } = await req.json() as {
+      slug?: string;
+      name?: string;
+      version?: string;
+      type?: string;
+      email?: string;
+    };
 
     if (!slug || !/^[a-z][a-z0-9-]*$/.test(slug)) {
       return NextResponse.json(
@@ -78,11 +84,26 @@ export async function POST(req: NextRequest) {
     if (clientType === "self-hosted") {
       // Self-hosted: register in registry only, no container
       const { registerClient } = await import("@/lib/registry");
-      registerClient(slug, name || slug, "self-hosted");
+      registerClient(slug, name || slug, "self-hosted", email);
       return NextResponse.json({ ok: true, output: `Self-hosted client "${slug}" registered` });
     }
 
-    const output = createClient(slug, name, version);
+    let output: string;
+
+    if (process.env.NODE_ENV !== "production") {
+      // Local dev: skip Docker entirely, just write the registry entry
+      const { registerClient } = await import("@/lib/registry");
+      registerClient(slug, name || slug, "hosted", email);
+      output = `[local] Registered "${slug}" in registry (skipped Docker)`;
+    } else {
+      // Production: run ac create — throws on failure, caught by outer catch → 500
+      output = createClient(slug, name, version);
+      if (email) {
+        const { setClientEmail } = await import("@/lib/registry");
+        setClientEmail(slug, email);
+      }
+    }
+
     return NextResponse.json({ ok: true, output });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to create client";

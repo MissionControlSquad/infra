@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthenticated, verifyPassword } from "@/lib/auth";
+import { isAuthenticated, isApiKeyAuthenticated, verifyPassword } from "@/lib/auth";
 import { getClient } from "@/lib/registry";
 import { deleteClient, getContainerStatus, getContainerStats, getTableStats, getClientUsage } from "@/lib/shell";
 import { getLicense, getActivationForLicense } from "@/lib/license";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  if (!(await isAuthenticated())) {
+  if (!(await isAuthenticated()) && !isApiKeyAuthenticated(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
