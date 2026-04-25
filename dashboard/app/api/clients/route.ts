@@ -107,11 +107,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Guard against duplicate provisioning: block only when an entry for this
-    // email is explicitly in "provisioning" state (creation already in flight).
-    // Allow "failed" and legacy entries through so the user can reprovision.
+    // (email + type) combination is explicitly in "provisioning" state.
+    // Scoping to type lets a user have separate hosted and self-hosted entries
+    // without each blocking the other.
     if (email) {
-      const { findClientByEmail } = await import("@/lib/registry");
-      const existing = findClientByEmail(email);
+      const { findClientByEmailAndType } = await import("@/lib/registry");
+      const existing = findClientByEmailAndType(email, CLIENT_TYPE.HOSTED);
       if (existing?.entry.provisioningStatus === PROVISIONING_STATUS.PROVISIONING) {
         return NextResponse.json(
           { error: "Already provisioning", slug: existing.slug },

@@ -157,3 +157,27 @@ export function findClientByEmail(email: string): { slug: string; entry: ClientE
   }
   return null;
 }
+
+/**
+ * Find a registry entry by email AND deployment type.
+ * A single user may have one hosted entry and one self-hosted entry (but never
+ * both active at the same time). Using (email + type) ensures the lookup
+ * returns the entry that matches the user's current subscription plan.
+ */
+export function findClientByEmailAndType(
+  email: string,
+  type: ClientType
+): { slug: string; entry: ClientEntry } | null {
+  const normalized = email.toLowerCase().trim();
+  const registry = readRegistry();
+  for (const [slug, entry] of Object.entries(registry)) {
+    if (
+      entry.email &&
+      entry.email.toLowerCase().trim() === normalized &&
+      (entry.type ?? CLIENT_TYPE.HOSTED) === type
+    ) {
+      return { slug, entry };
+    }
+  }
+  return null;
+}

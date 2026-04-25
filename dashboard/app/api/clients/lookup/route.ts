@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated, isApiKeyAuthenticated } from "@/lib/auth";
-import { findClientByEmail, setClientActive, setClientFailed } from "@/lib/registry";
+import { findClientByEmailAndType, setClientActive, setClientFailed } from "@/lib/registry";
 import { getContainerStatus } from "@/lib/shell";
 import { getLicense } from "@/lib/license";
-import { HOSTED_APP_DOMAIN, CLIENT_TYPE, PROVISIONING_STATUS } from "@/lib/constants";
+import {
+  SELF_HOST_PLAN_NAME,
+  HOSTED_APP_DOMAIN,
+  CLIENT_TYPE,
+  PROVISIONING_STATUS,
+} from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +22,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Valid email is required" }, { status: 400 });
   }
 
-  const result = findClientByEmail(email);
+  // Determine the deployment type the caller cares about from the plan name.
+  // A user may have one hosted entry and one self-hosted entry in the registry;
+  // planName selects which one is relevant for their current subscription.
+  const planName = req.nextUrl.searchParams.get("planName") ?? undefined;
+  const targetType =
+    planName === SELF_HOST_PLAN_NAME ? CLIENT_TYPE.SELF_HOSTED : CLIENT_TYPE.HOSTED;
+
+  const result = findClientByEmailAndType(email, targetType);
   if (!result) {
     return NextResponse.json({ found: false });
   }
