@@ -64,6 +64,7 @@ services:
         condition: service_healthy
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      API_KEY: ${API_KEY}
       AC_HOST_DIR: /opt/agentcenter
       GHCR_TOKEN: ${GHCR_TOKEN}
       GHCR_OWNER: ${GHCR_OWNER}

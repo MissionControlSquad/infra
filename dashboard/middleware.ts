@@ -13,6 +13,12 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow server-to-server API calls that carry X-API-Key.
+  // The route handler verifies the key — middleware just avoids the /login redirect.
+  if (pathname.startsWith("/api/") && req.headers.get("X-API-Key")) {
+    return NextResponse.next();
+  }
+
   // Check for session cookie
   const session = req.cookies.get("admin_session")?.value;
   if (!session) {

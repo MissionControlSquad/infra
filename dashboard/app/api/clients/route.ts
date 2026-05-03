@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
+import { isAuthenticated, isApiKeyAuthenticated } from "@/lib/auth";
 import { readRegistry } from "@/lib/registry";
 import { getContainerStatus, createClient } from "@/lib/shell";
 import { getLicense, getActivationForLicense } from "@/lib/license";
+import {
+  SELF_HOST_PLAN_NAME,
+  SELF_HOST_LICENSE_PLAN,
+  HOSTED_APP_DOMAIN,
+  CLIENT_TYPE,
+  PROVISIONING_STATUS,
+} from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  if (!(await isAuthenticated())) {
+export async function GET(req: NextRequest) {
+  if (!(await isAuthenticated()) && !isApiKeyAuthenticated(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -19,9 +26,9 @@ export async function GET() {
     return {
       slug,
       name: entry.name,
-      type: entry.type || "hosted",
-      status: entry.type === "self-hosted" ? null : getContainerStatus(slug),
-      url: `https://${slug}.app.agentcenter.cloud`,
+      type: entry.type || CLIENT_TYPE.HOSTED,
+      status: entry.type === CLIENT_TYPE.SELF_HOSTED ? null : getContainerStatus(slug),
+      url: `https://${slug}.${HOSTED_APP_DOMAIN}`,
       createdAt: entry.createdAt,
       domains: entry.domains ?? [],
       version: entry.version || "latest",
@@ -40,8 +47,8 @@ export async function GET() {
   // Compute aggregate stats
   const stats = {
     total: clients.length,
-    hosted: clients.filter((c) => c.type === "hosted").length,
-    selfHosted: clients.filter((c) => c.type === "self-hosted").length,
+    hosted: clients.filter((c) => c.type === CLIENT_TYPE.HOSTED).length,
+    selfHosted: clients.filter((c) => c.type === CLIENT_TYPE.SELF_HOSTED).length,
     licensed: clients.filter((c) => c.license?.active).length,
     activeLicenses: clients.filter((c) => c.license?.active).length,
     revokedLicenses: clients.filter(
@@ -59,12 +66,19 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await isAuthenticated())) {
+  if (!(await isAuthenticated()) && !isApiKeyAuthenticated(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const { slug, name, version, type } = await req.json();
+    const { slug, name, version, type, email, planName } = await req.json() as {
+      slug?: string;
+      name?: string;
+      version?: string;
+      type?: string;
+      email?: string;
+      planName?: string;
+    };
 
     if (!slug || !/^[a-z][a-z0-9-]*$/.test(slug)) {
       return NextResponse.json(
@@ -73,16 +87,62 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const clientType = type === "self-hosted" ? "self-hosted" : "hosted";
+    // Treat self-hosting plan subscribers as self-hosted even if type field wasn't set explicitly
+    const isSelfHosted =
+      type === CLIENT_TYPE.SELF_HOSTED || planName === SELF_HOST_PLAN_NAME;
+    const clientType = isSelfHosted ? CLIENT_TYPE.SELF_HOSTED : CLIENT_TYPE.HOSTED;
 
-    if (clientType === "self-hosted") {
-      // Self-hosted: register in registry only, no container
-      const { registerClient } = await import("@/lib/registry");
-      registerClient(slug, name || slug, "self-hosted");
-      return NextResponse.json({ ok: true, output: `Self-hosted client "${slug}" registered` });
+    if (clientType === CLIENT_TYPE.SELF_HOSTED) {
+      const { registerClient, deleteClient } = await import("@/lib/registry");
+      const { issueLicense } = await import("@/lib/license");
+      registerClient(slug, name || slug, CLIENT_TYPE.SELF_HOSTED, email);
+      let refreshToken: string;
+      try {
+        ({ refreshToken } = issueLicense(slug, email ?? slug, SELF_HOST_LICENSE_PLAN));
+      } catch (licenseErr) {
+        // Roll back the registry entry so the next attempt can retry cleanly
+        deleteClient(slug);
+        throw licenseErr;
+      }
+      return NextResponse.json({
+        ok: true,
+        output: `Self-hosted client "${slug}" registered`,
+        type: CLIENT_TYPE.SELF_HOSTED,
+        licenseKey: refreshToken,
+      });
     }
 
-    const output = createClient(slug, name, version);
+    // Guard against duplicate provisioning: block only when an entry for this
+    // (email + type) combination is explicitly in "provisioning" state.
+    // Scoping to type lets a user have separate hosted and self-hosted entries
+    // without each blocking the other.
+    if (email) {
+      const { findClientByEmailAndType } = await import("@/lib/registry");
+      const existing = findClientByEmailAndType(email, CLIENT_TYPE.HOSTED);
+      if (existing?.entry.provisioningStatus === PROVISIONING_STATUS.PROVISIONING) {
+        return NextResponse.json(
+          { error: "Already provisioning", slug: existing.slug },
+          { status: 409 }
+        );
+      }
+    }
+
+    let output: string;
+
+    if (process.env.NODE_ENV !== "production") {
+      // Local dev: skip Docker entirely, just write the registry entry
+      const { registerClient } = await import("@/lib/registry");
+      registerClient(slug, name || slug, CLIENT_TYPE.HOSTED, email);
+      output = `[local] Registered "${slug}" in registry (skipped Docker)`;
+    } else {
+      // Production: run ac create — throws on failure, caught by outer catch → 500
+      output = createClient(slug, name, version);
+      if (email) {
+        const { setClientEmail } = await import("@/lib/registry");
+        setClientEmail(slug, email);
+      }
+    }
+
     return NextResponse.json({ ok: true, output });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to create client";

@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import crypto from "crypto";
 
@@ -74,4 +75,17 @@ export function verifyPassword(password: string): boolean {
   const secret = getSecret();
   if (password.length !== secret.length) return false;
   return crypto.timingSafeEqual(Buffer.from(password), Buffer.from(secret));
+}
+
+/**
+ * Verify server-to-server API key from X-API-Key header.
+ * Used by the Vercel app to call infra endpoints without a session cookie.
+ */
+export function isApiKeyAuthenticated(req: NextRequest): boolean {
+  const apiKey = req.headers.get("X-API-Key");
+  if (!apiKey) return false;
+  const validKey = process.env.API_KEY;
+  if (!validKey) return false;
+  if (apiKey.length !== validKey.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(apiKey), Buffer.from(validKey));
 }
