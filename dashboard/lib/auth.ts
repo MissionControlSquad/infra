@@ -79,7 +79,7 @@ export function verifyPassword(password: string): boolean {
 
 /**
  * Verify server-to-server API key from X-API-Key header.
- * Used by the Cloudflare Pages function to call infra endpoints without a session cookie.
+ * Used by the Vercel app to call infra endpoints without a session cookie.
  */
 export function isApiKeyAuthenticated(req: NextRequest): boolean {
   const apiKey = req.headers.get("X-API-Key");

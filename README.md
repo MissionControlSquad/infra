@@ -29,7 +29,7 @@ Copy `dashboard/.env.example` to `dashboard/.env.local`:
 | Variable | Description |
 |---|---|
 | `ADMIN_PASSWORD` | Password to log into the dashboard UI. Use a strong random value. |
-| `API_KEY` | Shared secret for server-to-server calls from the website CF Functions. Must match `INFRA_API_KEY` in the website `.dev.vars`. Generate: `openssl rand -base64 32` |
+| `API_KEY` | Shared secret for server-to-server calls from the website Vercel app. Must match `INFRA_API_KEY` in the website Vercel environment variables. Generate: `openssl rand -base64 32` |
 
 ### API Endpoints
 
