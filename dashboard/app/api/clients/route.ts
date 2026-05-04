@@ -112,16 +112,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Guard against duplicate provisioning: block only when an entry for this
-    // (email + type) combination is explicitly in "provisioning" state.
-    // Scoping to type lets a user have separate hosted and self-hosted entries
-    // without each blocking the other.
+    // Guard against duplicate creation: block if any entry already exists for this
+    // (email + type) combination, regardless of provisioning state.
+    // Scoping to type lets a user have separate hosted and self-hosted entries.
     if (email) {
       const { findClientByEmailAndType } = await import("@/lib/registry");
       const existing = findClientByEmailAndType(email, CLIENT_TYPE.HOSTED);
-      if (existing?.entry.provisioningStatus === PROVISIONING_STATUS.PROVISIONING) {
+      if (existing) {
         return NextResponse.json(
-          { error: "Already provisioning", slug: existing.slug },
+          { error: "Client already exists", slug: existing.slug, provisioningStatus: existing.entry.provisioningStatus },
           { status: 409 }
         );
       }
