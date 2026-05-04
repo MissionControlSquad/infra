@@ -119,9 +119,9 @@ export async function POST(req: NextRequest) {
     if (email) {
       const { findClientByEmailAndType } = await import("@/lib/registry");
       const existing = findClientByEmailAndType(email, CLIENT_TYPE.HOSTED);
-      if (existing?.entry.provisioningStatus === PROVISIONING_STATUS.PROVISIONING) {
+      if (existing) {
         return NextResponse.json(
-          { error: "Already provisioning", slug: existing.slug },
+          { error: "Client already exists", slug: existing.slug, provisioningStatus: existing.entry.provisioningStatus },
           { status: 409 }
         );
       }
