@@ -74,6 +74,7 @@ jobs:
           VAPID_SUBJECT=${{ secrets.VAPID_SUBJECT }}
           RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
           NOTIFICATION_FROM_EMAIL=${{ secrets.NOTIFICATION_FROM_EMAIL }}
+          API_KEY=${{ secrets.API_KEY }}
           EOF
 
       - name: Sync infra files to VM
