@@ -3,7 +3,7 @@ import { isAuthenticated, isApiKeyAuthenticated, verifyPassword } from "@/lib/au
 import { getClient } from "@/lib/registry";
 import { deleteClient, getContainerStatus, getContainerStats, getTableStats, getClientUsage } from "@/lib/shell";
 import { getLicense, getActivationForLicense } from "@/lib/license";
-import { CLIENT_TYPE, HOSTED_APP_DOMAIN } from "@/lib/constants";
+import { CLIENT_TYPE, HOSTED_APP_DOMAIN, PROVISIONING_STATUS } from "@/lib/constants";
 
 export async function GET(
   req: NextRequest,
@@ -32,6 +32,7 @@ export async function GET(
     url: `https://${slug}.${HOSTED_APP_DOMAIN}`,
     database: isHosted ? `client_${slug}` : null,
     createdAt: client.createdAt,
+    provisioningStatus: client.provisioningStatus ?? PROVISIONING_STATUS.ACTIVE,
     domains: client.domains ?? [],
     version: client.version || "latest",
     tables: isHosted ? getTableStats(slug) : [],
