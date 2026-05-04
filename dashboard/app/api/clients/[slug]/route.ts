@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated, isApiKeyAuthenticated, verifyPassword } from "@/lib/auth";
-import { getClient } from "@/lib/registry";
+import { getClient, setClientEmail } from "@/lib/registry";
 import { deleteClient, getContainerStatus, getContainerStats, getTableStats, getClientUsage } from "@/lib/shell";
 import { getLicense, getActivationForLicense } from "@/lib/license";
 import { CLIENT_TYPE, HOSTED_APP_DOMAIN, PROVISIONING_STATUS } from "@/lib/constants";
@@ -62,6 +62,36 @@ export async function GET(
         }
       : null,
   });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ slug: string }> }
+) {
+  if (!isApiKeyAuthenticated(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { slug } = await params;
+  const client = getClient(slug);
+  if (!client) {
+    return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
+
+  try {
+    const { email } = await req.json() as { email?: string };
+    if (!email) {
+      return NextResponse.json({ error: "email is required" }, { status: 400 });
+    }
+    // Only write email if the entry doesn't already have one — never overwrite
+    if (!client.email) {
+      setClientEmail(slug, email);
+    }
+    return NextResponse.json({ ok: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to update client";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
 
 export async function DELETE(
