@@ -12,8 +12,8 @@ services:
     environment:
       - NODE_ENV=production
       - HOSTNAME=0.0.0.0
-      - POSTGRES_PRISMA_URL=postgresql://postgres:${PG_PASS}@postgres:5432/client___SLUG__
-      - POSTGRES_URL_NON_POOLING=postgresql://postgres:${PG_PASS}@postgres:5432/client___SLUG__
+      - POSTGRES_PRISMA_URL=postgresql://postgres:${PG_PASS}@postgres:5432/client___SLUG__?connection_limit=3&pool_timeout=10
+      - POSTGRES_URL_NON_POOLING=postgresql://postgres:${PG_PASS}@postgres:5432/client___SLUG__?connection_limit=1
       - AUTH_SECRET=__AUTH_SECRET__
       - CRON_SECRET=__CRON_SECRET__
       - REDIS_URL=redis://redis:6379

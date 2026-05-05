@@ -292,7 +292,7 @@ cmd_fix_migrations() {
   image=$(grep "image:" "$CLIENTS_DIR/$slug.yml" | awk '{print $2}' | head -1)
   [ -n "$image" ] || die "Could not determine image for $slug"
   db="client_$slug"
-  pg_url="postgresql://postgres:${PG_PASS}@postgres:5432/$db"
+  pg_url="postgresql://postgres:${PG_PASS}@postgres:5432/$db?connection_limit=1&pool_timeout=5"
 
   bold "Fixing migrations for $slug (image: $image)..."
 
