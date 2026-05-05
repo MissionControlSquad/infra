@@ -84,6 +84,10 @@ export function upgradeClient(slug: string, version: string): string {
   return run(`${AC_PATH} upgrade ${slug} --version ${version}`, 120_000);
 }
 
+export function fixMigrations(slug: string): string {
+  return run(`${AC_PATH} fix-migrations ${slug}`, 180_000);
+}
+
 export function refreshEnv(slug: string): string {
   return run(`${AC_PATH} refresh-env ${slug}`, 60_000);
 }

@@ -151,7 +151,7 @@ cmd_create() {
      --arg ver "$version" \
      --arg lic "$license_refresh_token" \
      --arg plan "starter" \
-     '.[$slug] = {name: $name, authSecret: $auth, cronSecret: $cron, licenseRefreshToken: $lic, createdAt: $date, domains: [], version: $ver, plan: $plan}' \
+     '.[$slug] = {name: $name, type: "hosted", provisioningStatus: "provisioning", provisioningAttempts: 1, authSecret: $auth, cronSecret: $cron, licenseRefreshToken: $lic, createdAt: $date, domains: [], version: $ver, plan: $plan}' \
      "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
   # 7. Start the container
@@ -267,6 +267,77 @@ cmd_restart() {
   bold "Restarting $slug..."
   compose_client "$slug" restart "app-$slug"
   green "Done."
+}
+
+cmd_fix_migrations() {
+  local slug
+  slug=$(require_slug "${1:-}")
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+  [ -n "${PG_PASS:-}" ] || die "PG_PASS not set"
+
+  local image db pg_url
+  image=$(grep "image:" "$CLIENTS_DIR/$slug.yml" | awk '{print $2}' | head -1)
+  [ -n "$image" ] || die "Could not determine image for $slug"
+  db="client_$slug"
+  pg_url="postgresql://postgres:${PG_PASS}@postgres:5432/$db"
+
+  bold "Fixing migrations for $slug (image: $image)..."
+
+  # 1. Resolve any failed migration recorded in _prisma_migrations (P3009)
+  echo "  Checking for failed migrations..."
+  local failed
+  failed=$(docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
+    exec -T postgres psql -U postgres -d "$db" -t -A \
+    -c "SELECT migration_name FROM _prisma_migrations WHERE started_at IS NOT NULL AND finished_at IS NULL AND rolled_back_at IS NULL LIMIT 1" \
+    2>/dev/null || true)
+  if [ -n "$failed" ]; then
+    echo "  Found failed migration: $failed — resolving as rolled-back..."
+    docker run --rm --network agentcenter \
+      -e POSTGRES_PRISMA_URL="$pg_url" \
+      -e POSTGRES_URL_NON_POOLING="$pg_url" \
+      --entrypoint sh "$image" \
+      -c "node /prisma-cli/node_modules/prisma/build/index.js migrate resolve --rolled-back \"$failed\" 2>/dev/null || true"
+  else
+    echo "  No failed migrations found."
+  fi
+
+  # 2. Ensure DeploymentStatus enum exists with all values (older DBs missing cloud-vm schema)
+  echo "  Ensuring DeploymentStatus enum is complete..."
+  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
+    exec -T postgres psql -U postgres -d "$db" \
+    -c "DO \$\$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'DeploymentStatus') THEN
+        CREATE TYPE \"DeploymentStatus\" AS ENUM ('provisioning','installing','running','stopped','error','destroying','destroyed','waiting_for_ssh','installing_deps','installing_openclaw','configuring','starting_service');
+      END IF;
+    END \$\$;" 2>/dev/null || true
+  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
+    exec -T postgres psql -U postgres -d "$db" \
+    -c "ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'waiting_for_ssh';
+        ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'installing_deps';
+        ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'installing_openclaw';
+        ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'configuring';
+        ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'starting_service';" 2>/dev/null || true
+
+  # 3. Run migrate deploy via one-shot container
+  echo "  Running migrate deploy..."
+  docker run --rm --network agentcenter \
+    -e POSTGRES_PRISMA_URL="$pg_url" \
+    -e POSTGRES_URL_NON_POOLING="$pg_url" \
+    --entrypoint sh "$image" \
+    -c "node /prisma-cli/node_modules/prisma/build/index.js migrate deploy"
+
+  # 4. Seed feature flags (ON CONFLICT DO NOTHING — safe for existing clients)
+  echo "  Seeding feature flags..."
+  seed_feature_flags "$slug"
+  local plan
+  plan=$(jq -r ".\"$slug\".plan // \"starter\"" "$REGISTRY")
+  sync_plan_flags "$slug" "$plan"
+
+  # 5. Restart container
+  echo "  Restarting container..."
+  compose_client "$slug" up -d "app-$slug"
+
+  green "Migration fix complete for $slug."
 }
 
 cmd_add_domain() {
@@ -781,6 +852,9 @@ Commands:
   refresh-env [slug|--all]        Regenerate compose files with latest env vars
   status                          Show system resource usage
 
+  fix-migrations <slug>           Resolve failed/pending migrations and seed feature flags
+                                    Safe for healthy clients (idempotent)
+
   issue-license <slug> [plan]     Issue a license (starter|pro|enterprise)
                                     Hosted: injects token and restarts container
                                     Self-hosted: prints token to give to client
@@ -819,6 +893,7 @@ case "$COMMAND" in
   list)          cmd_list ;;
   logs)          cmd_logs "$@" ;;
   restart)       cmd_restart "$@" ;;
+  fix-migrations) cmd_fix_migrations "$@" ;;
   add-domain)    cmd_add_domain "$@" ;;
   update)        cmd_update "$@" ;;
   upgrade)       cmd_upgrade "$@" ;;

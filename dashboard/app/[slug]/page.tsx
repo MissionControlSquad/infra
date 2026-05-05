@@ -69,6 +69,8 @@ export default function ClientDetailPage({
   const [resetError, setResetError] = useState("");
   const [copied, setCopied] = useState(false);
   const [refreshingEnv, setRefreshingEnv] = useState(false);
+  const [fixingMigrations, setFixingMigrations] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<string | null>(null);
   const [flags, setFlags] = useState<{ key: string; enabled: boolean; managedBy: string; description: string }[]>([]);
   const [flagsLoading, setFlagsLoading] = useState(true);
   const [togglingFlag, setTogglingFlag] = useState<string | null>(null);
@@ -115,6 +117,28 @@ export default function ClientDetailPage({
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
   }, [logs]);
+
+  async function handleFixMigrations() {
+    setFixingMigrations(true);
+    setMigrationResult(null);
+    try {
+      const res = await fetch(`/api/clients/${slug}/fix-migrations`, { method: "POST" });
+      const data = await res.json();
+      setMigrationResult(res.ok ? "Migrations fixed successfully." : (data.error ?? "Failed"));
+      if (res.ok) {
+        setTimeout(async () => {
+          const [clientRes, logsRes] = await Promise.all([
+            fetch(`/api/clients/${slug}`),
+            fetch(`/api/clients/${slug}/logs`),
+          ]);
+          if (clientRes.ok) setClient(await clientRes.json());
+          if (logsRes.ok) { const d = await logsRes.json(); setLogs(d.logs || ""); }
+        }, 3000);
+      }
+    } finally {
+      setFixingMigrations(false);
+    }
+  }
 
   async function handleRefreshEnv() {
     setRefreshingEnv(true);
@@ -430,6 +454,16 @@ export default function ClientDetailPage({
           )}
           {isHosted && (
             <button
+              onClick={handleFixMigrations}
+              disabled={fixingMigrations}
+              title="Resolve failed migrations, ensure DB schema is complete, seed feature flags, and restart"
+              className="px-4 py-2 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+            >
+              {fixingMigrations ? "Fixing..." : "Fix Migrations"}
+            </button>
+          )}
+          {isHosted && (
+            <button
               onClick={handleRefreshEnv}
               disabled={refreshingEnv}
               className="px-4 py-2 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
@@ -453,6 +487,12 @@ export default function ClientDetailPage({
           </button>
         </div>
       </div>
+
+      {migrationResult && (
+        <div className={`px-4 py-3 rounded-lg text-sm ${migrationResult.includes("success") ? "bg-violet-500/10 text-violet-300" : "bg-red-500/10 text-red-400"}`}>
+          {migrationResult}
+        </div>
+      )}
 
       {/* Info Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
