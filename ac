@@ -326,6 +326,18 @@ cmd_fix_migrations() {
     --entrypoint sh "$image" \
     -c "node /prisma-cli/node_modules/prisma/build/index.js migrate deploy"
 
+  # 3b. db push — fills schema gaps left by the P3005 baseline on old DBs.
+  # Old clients provisioned before migration tracking may be missing tables that
+  # were added in later migrations (feature_flags, licenses, cloud_vms, etc.).
+  # migrate deploy won't run them (all marked applied), but db push compares the
+  # Prisma schema against the actual DB and adds only what's missing.
+  echo "  Syncing any missing schema elements (db push)..."
+  docker run --rm --network agentcenter \
+    -e POSTGRES_PRISMA_URL="$pg_url" \
+    -e POSTGRES_URL_NON_POOLING="$pg_url" \
+    --entrypoint sh "$image" \
+    -c "node /prisma-cli/node_modules/prisma/build/index.js db push --skip-generate --accept-data-loss 2>/dev/null || true"
+
   # 4. Seed feature flags (ON CONFLICT DO NOTHING — safe for existing clients)
   echo "  Seeding feature flags..."
   seed_feature_flags "$slug"
