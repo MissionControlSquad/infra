@@ -41,13 +41,13 @@ export function planBadgeClass(plan: string): string {
   return "bg-zinc-700/50 text-zinc-400";
 }
 
-/** Plan limits and features shown in the issue-license modal. Keep in sync with plan-config.json. */
+/** Plan limits and features. Keep in sync with scripts/plan-config.json. */
 export const PLAN_META: Record<LicensePlan, {
   agents: number; projects: number; seats: number; features: string[];
 }> = {
-  starter: { agents: 5,  projects: 3,  seats: 3,  features: ["channels", "documents", "agent_queue"] },
-  pro:     { agents: 15, projects: 15, seats: 10, features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications", "live_gateway"] },
-  scale:   { agents: 50, projects: 50, seats: -1, features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications", "live_gateway"] },
+  starter: { agents: 5,  projects: 3,  seats: 3,  features: ["agent_queue", "notifications", "analytics", "reviews", "channels"] },
+  pro:     { agents: 15, projects: 15, seats: 10, features: ["agent_queue", "notifications", "analytics", "reviews", "channels", "documents", "live_gateway", "recurring_tasks"] },
+  scale:   { agents: 50, projects: 50, seats: -1, features: ["agent_queue", "notifications", "analytics", "reviews", "channels", "documents", "live_gateway", "recurring_tasks", "cloud_vms"] },
 };
 
 /** Client deployment type discriminator values. */

@@ -4,30 +4,30 @@
       "maxAgents": 5,
       "maxProjects": 3,
       "maxSeats": 3,
-      "features": ["channels", "documents", "agent_queue"]
+      "features": ["agent_queue", "notifications", "analytics", "reviews", "channels"]
     },
     "pro": {
       "maxAgents": 15,
       "maxProjects": 15,
       "maxSeats": 10,
-      "features": ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications", "live_gateway"]
+      "features": ["agent_queue", "notifications", "analytics", "reviews", "channels", "documents", "live_gateway", "recurring_tasks"]
     },
     "scale": {
       "maxAgents": 50,
       "maxProjects": 50,
       "maxSeats": -1,
-      "features": ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications", "live_gateway"]
+      "features": ["agent_queue", "notifications", "analytics", "reviews", "channels", "documents", "live_gateway", "recurring_tasks", "cloud_vms"]
     }
   },
   "allFeatures": [
-    { "key": "channels",        "description": "Team messaging channels and DMs",              "managedBy": "system" },
-    { "key": "analytics",       "description": "Analytics dashboard with charts and metrics",   "managedBy": "system" },
-    { "key": "recurring_tasks", "description": "Recurring/scheduled task templates",            "managedBy": "system" },
-    { "key": "cloud_vms",       "description": "Cloud VM provisioning for agents",              "managedBy": "system" },
-    { "key": "reviews",         "description": "Task review workflow (approve/reject/clarify)", "managedBy": "system" },
-    { "key": "documents",       "description": "Document management and project docs",          "managedBy": "system" },
-    { "key": "agent_queue",     "description": "Agent work queue management",                   "managedBy": "user" },
-    { "key": "notifications",   "description": "Push and email notifications",                  "managedBy": "user" },
-    { "key": "live_gateway",    "description": "Real-time live gateway for streaming updates",  "managedBy": "system" }
+    { "key": "channels",        "description": "Team channels & DMs",        "managedBy": "system" },
+    { "key": "analytics",       "description": "Advanced analytics",          "managedBy": "system" },
+    { "key": "recurring_tasks", "description": "Recurring tasks",             "managedBy": "system" },
+    { "key": "cloud_vms",       "description": "Cloud VM provisioning",       "managedBy": "system" },
+    { "key": "reviews",         "description": "Approval workflows",          "managedBy": "system" },
+    { "key": "documents",       "description": "Document management",         "managedBy": "system" },
+    { "key": "agent_queue",     "description": "Kanban task management",      "managedBy": "user"   },
+    { "key": "notifications",   "description": "@Mentions & notifications",   "managedBy": "user"   },
+    { "key": "live_gateway",    "description": "Live Gateway",                "managedBy": "system" }
   ]
 }
