@@ -45,13 +45,14 @@ compose() {
 
 compose_client() {
   local slug="$1"; shift
-  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" -f "$CLIENTS_DIR/$slug.yml" "$@"
+  COMPOSE_IGNORE_ORPHANS=true \
+    docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" -f "$CLIENTS_DIR/$slug.yml" "$@"
 }
 
 ghcr_login() {
   [ -n "${GHCR_TOKEN:-}" ] || die "GHCR_TOKEN not set in .env"
   [ -n "${GHCR_USER:-}" ] || die "GHCR_USER not set in .env"
-  echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+  echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin 2>/dev/null
 }
 
 resolve_image() {
@@ -464,16 +465,17 @@ cmd_upgrade() {
   echo "  Restarting container..."
   compose_client "$slug" up -d "app-$slug"
 
-  # 5. Seed any missing feature flags (ON CONFLICT DO NOTHING keeps existing rows intact)
+  # 5. Seed any missing feature flags — non-fatal: the container may still be
+  #    running migrations immediately after start, so psql can fail momentarily.
   echo "  Seeding new feature flags..."
-  seed_feature_flags "$slug"
+  seed_feature_flags "$slug" || echo "  Warning: flag seeding failed (container may still be migrating — re-run fix-migrations if needed)"
 
   # 6. Re-enforce plan limits so new flags get the correct enabled state
   echo "  Syncing plan flags..."
   local plan
   plan=$(jq -r ".\"$slug\".plan // empty" "$REGISTRY")
   if [ -n "$plan" ]; then
-    sync_plan_flags "$slug" "$plan"
+    sync_plan_flags "$slug" "$plan" || true
   else
     echo "  Warning: no plan set for $slug — skipping flag sync. Run './ac set-plan $slug <plan>' to fix."
   fi
