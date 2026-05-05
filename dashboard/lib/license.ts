@@ -2,7 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { syncRefreshTokenToRegistry } from "./registry";
-import { LICENSE_PLANS, LicensePlan } from "./constants";
+import { LicensePlan, PLAN_META } from "./constants";
 export type { LicensePlan };
 
 // ── RSA Key Management ─────────────────────────────────────────
@@ -115,13 +115,14 @@ function loadPlanConfig(): PlanConfig {
   try {
     return JSON.parse(fs.readFileSync(configPath, "utf-8"));
   } catch {
-    // Fallback if config file not found
+    // Fallback: derive from PLAN_META (single source within the dashboard codebase)
     return {
-      plans: {
-        starter: { maxAgents: 5, maxProjects: 3, maxSeats: 3, features: ["channels", "documents", "agent_queue"] },
-        pro: { maxAgents: 15, maxProjects: 15, maxSeats: 10, features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications", "live_gateway"] },
-        scale: { maxAgents: 50, maxProjects: 50, maxSeats: -1, features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications", "live_gateway"] },
-      },
+      plans: Object.fromEntries(
+        Object.entries(PLAN_META).map(([key, m]) => [
+          key,
+          { maxAgents: m.agents, maxProjects: m.projects, maxSeats: m.seats, features: m.features },
+        ])
+      ),
       allFeatures: [],
     };
   }
