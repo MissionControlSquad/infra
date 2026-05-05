@@ -630,9 +630,11 @@ seed_feature_flags() {
   # to correct the enabled state according to the client's plan.
   if [ -f "$config" ]; then
     local insert_sql
+    # Use PostgreSQL dollar-quoting ($$value$$) for string literals.
+    # @json produces double-quoted JSON strings which PostgreSQL treats as identifiers, not values.
     insert_sql=$(jq -r '
       .allFeatures | map(
-        "(gen_random_uuid()::text, \(.key | @json), true, \(.managedBy | @json), \(.description | @json), NOW())"
+        "(gen_random_uuid()::text, $$\(.key)$$, true, $$\(.managedBy)$$, $$\(.description // "")$$, NOW())"
       ) | join(",\n      ")
     ' "$config")
 
@@ -640,7 +642,7 @@ seed_feature_flags() {
       INSERT INTO feature_flags (id, key, enabled, \"managedBy\", description, \"updatedAt\") VALUES
       $insert_sql
       ON CONFLICT (key) DO NOTHING;
-    " 2>/dev/null
+    "
   fi
 }
 
@@ -680,15 +682,11 @@ cmd_enable() {
   [ -n "$feature" ] || die "Usage: $0 enable <slug> <feature>"
   [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
 
-  local rows
-  rows=$(psql_client "$slug" -t -A -v key="$feature" -c "
-    WITH upd AS (
-      UPDATE feature_flags SET enabled = true, \"updatedAt\" = NOW()
-      WHERE key = :'key' RETURNING 1
-    ) SELECT COUNT(*) FROM upd;
-  " 2>/dev/null || echo "0")
-
-  [ "${rows:-0}" -eq 0 ] && die "Feature '$feature' not found for client '$slug'"
+  psql_client "$slug" -v key="$feature" -c "
+    INSERT INTO feature_flags (id, key, enabled, \"managedBy\", description, \"updatedAt\")
+    VALUES (gen_random_uuid()::text, :'key', true, 'user', '', NOW())
+    ON CONFLICT (key) DO UPDATE SET enabled = true, \"updatedAt\" = NOW();
+  "
 
   notify_flag_change "$slug"
   green "Feature '$feature' enabled for $slug"
@@ -701,15 +699,11 @@ cmd_disable() {
   [ -n "$feature" ] || die "Usage: $0 disable <slug> <feature>"
   [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
 
-  local rows
-  rows=$(psql_client "$slug" -t -A -v key="$feature" -c "
-    WITH upd AS (
-      UPDATE feature_flags SET enabled = false, \"updatedAt\" = NOW()
-      WHERE key = :'key' RETURNING 1
-    ) SELECT COUNT(*) FROM upd;
-  " 2>/dev/null || echo "0")
-
-  [ "${rows:-0}" -eq 0 ] && die "Feature '$feature' not found for client '$slug'"
+  psql_client "$slug" -v key="$feature" -c "
+    INSERT INTO feature_flags (id, key, enabled, \"managedBy\", description, \"updatedAt\")
+    VALUES (gen_random_uuid()::text, :'key', false, 'user', '', NOW())
+    ON CONFLICT (key) DO UPDATE SET enabled = false, \"updatedAt\" = NOW();
+  "
 
   notify_flag_change "$slug"
   green "Feature '$feature' disabled for $slug"
