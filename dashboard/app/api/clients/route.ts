@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated, isApiKeyAuthenticated } from "@/lib/auth";
-import { readRegistry } from "@/lib/registry";
+import { listActiveClients, listDeletedClients } from "@/lib/registry";
 import { getContainerStatus, createClient } from "@/lib/shell";
 import { getLicense, getActivationForLicense } from "@/lib/license";
 import {
@@ -18,8 +18,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const registry = readRegistry();
-  const clients = Object.entries(registry).map(([slug, entry]) => {
+  const clients = listActiveClients().map(({ slug, entry }) => {
     const license = getLicense(slug);
     const activation = license ? getActivationForLicense(license.id) : null;
 
@@ -62,7 +61,15 @@ export async function GET(req: NextRequest) {
     }, {}),
   };
 
-  return NextResponse.json({ clients, stats });
+  const deletedClients = listDeletedClients().map(({ slug, deletedAt, entry }) => ({
+    slug,
+    name: entry.name,
+    type: entry.type || CLIENT_TYPE.HOSTED,
+    createdAt: entry.createdAt,
+    deletedAt,
+  }));
+
+  return NextResponse.json({ clients, stats, deletedClients });
 }
 
 export async function POST(req: NextRequest) {

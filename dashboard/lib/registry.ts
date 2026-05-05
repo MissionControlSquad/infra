@@ -38,6 +38,38 @@ export function readRegistry(): Registry {
   }
 }
 
+/** Returns only active (non-deleted) entries — excludes keys prefixed with "deleted_". */
+export function listActiveClients(): Array<{ slug: string; entry: ClientEntry }> {
+  const reg = readRegistry();
+  return Object.entries(reg)
+    .filter(([key]) => !key.startsWith("deleted_"))
+    .map(([slug, entry]) => ({ slug, entry }));
+}
+
+export interface DeletedClientEntry {
+  slug: string;
+  deletedAt: string;
+  entry: ClientEntry;
+}
+
+/**
+ * Returns archived (soft-deleted) entries.
+ * Keys are stored as "deleted_<slug>_<YYYYMMDDHHMMSS>" by cmd_delete in ac.
+ */
+export function listDeletedClients(): DeletedClientEntry[] {
+  const reg = readRegistry();
+  const results: DeletedClientEntry[] = [];
+  for (const [key, entry] of Object.entries(reg)) {
+    const match = key.match(/^deleted_(.+)_(\d{14})$/);
+    if (!match) continue;
+    const [, slug, ts] = match;
+    // Parse YYYYMMDDHHMMSS → ISO string
+    const deletedAt = `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}T${ts.slice(8, 10)}:${ts.slice(10, 12)}:${ts.slice(12, 14)}Z`;
+    results.push({ slug, deletedAt, entry });
+  }
+  return results.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+}
+
 export function getClient(slug: string): ClientEntry | null {
   const reg = readRegistry();
   return reg[slug] ?? null;
@@ -163,6 +195,7 @@ export function findClientByEmail(email: string): { slug: string; entry: ClientE
   const normalized = email.toLowerCase().trim();
   const registry = readRegistry();
   for (const [slug, entry] of Object.entries(registry)) {
+    if (slug.startsWith("deleted_")) continue;
     if (entry.email && entry.email.toLowerCase().trim() === normalized) {
       return { slug, entry };
     }
@@ -183,6 +216,7 @@ export function findClientByEmailAndType(
   const normalized = email.toLowerCase().trim();
   const registry = readRegistry();
   for (const [slug, entry] of Object.entries(registry)) {
+    if (slug.startsWith("deleted_")) continue;
     if (
       entry.email &&
       entry.email.toLowerCase().trim() === normalized &&

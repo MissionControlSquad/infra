@@ -30,6 +30,14 @@ interface ClientStats {
   byPlan: Record<string, number>;
 }
 
+interface DeletedClient {
+  slug: string;
+  name: string;
+  type: ClientType;
+  createdAt: string;
+  deletedAt: string;
+}
+
 interface Container {
   name: string;
   status: string;
@@ -48,6 +56,8 @@ interface SystemStats {
 export default function HomePage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [clientStats, setClientStats] = useState<ClientStats | null>(null);
+  const [deletedClients, setDeletedClients] = useState<DeletedClient[]>([]);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -63,6 +73,7 @@ export default function HomePage() {
         if (data && Array.isArray(data.clients)) {
           setClients(data.clients);
           setClientStats(data.stats ?? null);
+          setDeletedClients(Array.isArray(data.deletedClients) ? data.deletedClients : []);
         }
       })
       .finally(() => setLoading(false));
@@ -88,7 +99,14 @@ export default function HomePage() {
       body: JSON.stringify({ password }),
     });
     if (res.ok) {
+      const deleted = clients.find((c) => c.slug === slug);
       setClients((prev) => prev.filter((c) => c.slug !== slug));
+      if (deleted) {
+        setDeletedClients((prev) => [
+          { slug: deleted.slug, name: deleted.name, type: deleted.type, createdAt: deleted.createdAt, deletedAt: new Date().toISOString() },
+          ...prev,
+        ]);
+      }
     } else {
       const data = await res.json();
       alert(data.error || "Failed to delete");
@@ -371,6 +389,64 @@ export default function HomePage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Deleted Clients */}
+      {deletedClients.length > 0 && (
+        <div className="mt-10">
+          <button
+            onClick={() => setShowDeleted((v) => !v)}
+            className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors mb-3"
+          >
+            <span
+              className={`transition-transform ${showDeleted ? "rotate-90" : ""}`}
+            >
+              ▶
+            </span>
+            Deleted clients ({deletedClients.length})
+          </button>
+
+          {showDeleted && (
+            <div className="overflow-x-auto rounded-lg border border-zinc-800/50 opacity-60">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-800 bg-zinc-900/30 text-zinc-500 text-left">
+                    <th className="px-4 py-3 font-medium">Client</th>
+                    <th className="px-4 py-3 font-medium">Type</th>
+                    <th className="px-4 py-3 font-medium">Created</th>
+                    <th className="px-4 py-3 font-medium">Deleted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deletedClients.map((c) => (
+                    <tr
+                      key={`${c.slug}-${c.deletedAt}`}
+                      className="border-b border-zinc-800/30"
+                    >
+                      <td className="px-4 py-3">
+                        <div>
+                          <span className="font-medium text-zinc-500 line-through">{c.name}</span>
+                          <span className="text-zinc-600 font-mono text-xs ml-2">{c.slug}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-800 text-zinc-500">
+                          {c.type === CLIENT_TYPE.SELF_HOSTED ? "Self-Hosted" : "Hosted"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600">
+                        {new Date(c.createdAt).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-500">
+                        {new Date(c.deletedAt).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>

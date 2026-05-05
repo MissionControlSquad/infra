@@ -174,18 +174,23 @@ cmd_create() {
 }
 
 cmd_delete() {
-  local slug confirm=false
+  local slug confirm=false force=false
   slug=$(require_slug "${1:-}")
   shift
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --confirm) confirm=true; shift ;;
+      --force)   force=true; shift ;;
       *) die "Unknown option: $1" ;;
     esac
   done
 
-  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+  # Allow --force to delete an orphaned DB/registry entry even when the .yml is missing.
+  # Normal path requires the .yml to exist.
+  if [ "$force" != true ]; then
+    [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found. Use --force to remove an orphaned registry entry or database."
+  fi
 
   if [ "$confirm" != true ]; then
     die "This will delete the database and all data. Pass --confirm to proceed."
@@ -193,10 +198,15 @@ cmd_delete() {
 
   bold "Deleting client: $slug"
 
-  # 1. Stop and remove container
+  # 1. Stop and remove container (best-effort — may not exist if yml is missing)
   echo "  Stopping container..."
-  compose_client "$slug" stop "app-$slug" 2>/dev/null || true
-  compose_client "$slug" rm -f "app-$slug" 2>/dev/null || true
+  if [ -f "$CLIENTS_DIR/$slug.yml" ]; then
+    compose_client "$slug" stop "app-$slug" 2>/dev/null || true
+    compose_client "$slug" rm -f "app-$slug" 2>/dev/null || true
+  else
+    docker stop "agentcenter-app-${slug}-1" 2>/dev/null || true
+    docker rm   "agentcenter-app-${slug}-1" 2>/dev/null || true
+  fi
 
   # 2. Remove client data volume
   echo "  Removing data volume..."
@@ -212,20 +222,22 @@ cmd_delete() {
   echo "  Renaming database client_$slug → deleted_${slug}_${ts}..."
   if ! docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" exec -T postgres \
     psql -U postgres -c "ALTER DATABASE client_$slug RENAME TO deleted_${slug}_${ts};" 2>/dev/null; then
-    echo "  Warning: Could not rename database — it may have active connections."
-    echo "  Data preserved as 'client_$slug'. Rename manually when safe:"
-    echo "    ALTER DATABASE client_$slug RENAME TO deleted_${slug}_${ts};"
+    echo "  Warning: Could not rename database (may not exist or has active connections)."
+    echo "  If the DB exists: ALTER DATABASE client_$slug RENAME TO deleted_${slug}_${ts};"
   fi
 
   # 4. Remove compose file
   rm -f "$CLIENTS_DIR/$slug.yml"
 
-  # 5. Remove from registry
+  # 5. Archive registry entry (rename key to deleted_<slug>_<ts> for audit trail)
+  local deleted_key="deleted_${slug}_${ts}"
   local tmp
   tmp=$(mktemp)
-  jq --arg slug "$slug" 'del(.[$slug])' "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
+  jq --arg slug "$slug" --arg key "$deleted_key" \
+    'if has($slug) then (.[$key] = .[$slug] | del(.[$slug])) else . end' \
+    "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
-  green "Client '$slug' deleted."
+  green "Client '$slug' deleted. Registry entry archived as '$deleted_key'."
 }
 
 cmd_list() {
@@ -238,7 +250,7 @@ cmd_list() {
   printf "  %-20s %-25s %-10s %-12s %s\n" "SLUG" "NAME" "STATUS" "PLAN" "CREATED"
   printf "  %-20s %-25s %-10s %-12s %s\n" "----" "----" "------" "----" "-------"
 
-  for slug in $(jq -r 'keys[]' "$REGISTRY"); do
+  for slug in $(jq -r 'keys[] | select(startswith("deleted_") | not)' "$REGISTRY"); do
     local name created plan status cid
     name=$(jq -r ".\"$slug\".name" "$REGISTRY")
     created=$(jq -r ".\"$slug\".createdAt" "$REGISTRY")
@@ -410,7 +422,7 @@ cmd_update() {
 
   if [ "$target" = "--all" ]; then
     bold "Restarting all clients..."
-    for slug in $(jq -r 'keys[]' "$REGISTRY"); do
+    for slug in $(jq -r 'keys[] | select(startswith("deleted_") | not)' "$REGISTRY"); do
       echo "  Updating $slug..."
       compose_client "$slug" up -d "app-$slug"
       seed_feature_flags "$slug"
@@ -551,7 +563,7 @@ cmd_refresh_env() {
 
   if [ "$target" = "--all" ]; then
     bold "Refreshing env for all clients..."
-    for slug in $(jq -r 'keys[]' "$REGISTRY"); do
+    for slug in $(jq -r 'keys[] | select(startswith("deleted_") | not)' "$REGISTRY"); do
       local version image
       version=$(jq -r ".\"$slug\".version // \"latest\"" "$REGISTRY")
       image=$(resolve_image "$version")
@@ -858,6 +870,98 @@ cmd_issue_license() {
   sync_plan_flags "$slug" "$plan"
 }
 
+cmd_orphans() {
+  local fix=false confirm=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --fix)     fix=true; shift ;;
+      --confirm) confirm=true; shift ;;
+      *) die "Unknown option: $1" ;;
+    esac
+  done
+
+  bold "Checking for registry/database drift..."
+
+  # Slugs in registry
+  local registry_slugs db_slugs
+  registry_slugs=$(jq -r 'keys[] | select(startswith("deleted_") | not)' "$REGISTRY" 2>/dev/null || true)
+
+  # client_* databases actually in postgres (exclude deleted_* soft-deleted DBs)
+  db_slugs=$(docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
+    exec -T postgres psql -U postgres -t -A \
+    -c "SELECT datname FROM pg_database WHERE datname LIKE 'client_%' ORDER BY datname" \
+    2>/dev/null | sed 's/^client_//' || true)
+
+  local orphan_dbs=()   # DB exists, no registry entry
+  local orphan_reg=()   # Registry entry, no DB
+
+  # Check each registry entry has a matching DB
+  while IFS= read -r slug; do
+    [ -z "$slug" ] && continue
+    if ! echo "$db_slugs" | grep -qx "$slug"; then
+      orphan_reg+=("$slug")
+    fi
+  done <<< "$registry_slugs"
+
+  # Check each DB has a matching registry entry
+  while IFS= read -r slug; do
+    [ -z "$slug" ] && continue
+    if ! echo "$registry_slugs" | grep -qx "$slug"; then
+      orphan_dbs+=("$slug")
+    fi
+  done <<< "$db_slugs"
+
+  if [ ${#orphan_reg[@]} -eq 0 ] && [ ${#orphan_dbs[@]} -eq 0 ]; then
+    green "No drift detected — registry and databases are in sync."
+    return 0
+  fi
+
+  if [ ${#orphan_reg[@]} -gt 0 ]; then
+    echo ""
+    red "Registry entries with NO database (${#orphan_reg[@]}):"
+    for slug in "${orphan_reg[@]}"; do
+      echo "  - $slug  (registry + yml exist, database missing)"
+    done
+    echo "  → These clients will fail to start. Run './ac delete $slug --confirm' to remove, or recreate the DB."
+  fi
+
+  if [ ${#orphan_dbs[@]} -gt 0 ]; then
+    echo ""
+    red "Databases with NO registry entry (${#orphan_dbs[@]}):"
+    for slug in "${orphan_dbs[@]}"; do
+      echo "  - client_$slug  (database exists, no registry/compose entry)"
+    done
+    echo "  → Orphaned databases. Run './ac delete $slug --force --confirm' to clean up."
+  fi
+
+  if [ "$fix" = true ]; then
+    if [ "$confirm" != true ]; then
+      die "Pass --confirm to apply fixes (orphaned DBs and registry entries will be soft-deleted/archived)."
+    fi
+    local fix_ts
+    fix_ts=$(date -u +%Y%m%d%H%M%S)
+    for slug in "${orphan_dbs[@]}"; do
+      echo "  Archiving orphaned database for: $slug"
+      cmd_delete "$slug" --force --confirm
+    done
+    for slug in "${orphan_reg[@]}"; do
+      # Registry entry exists but DB is gone — archive yml + registry entry with timestamp
+      echo "  Archiving registry entry with no database: $slug"
+      local deleted_key="deleted_${slug}_${fix_ts}"
+      if [ -f "$CLIENTS_DIR/$slug.yml" ]; then
+        mv "$CLIENTS_DIR/$slug.yml" "$CLIENTS_DIR/${deleted_key}.yml"
+        echo "    Compose file archived: ${deleted_key}.yml"
+      fi
+      local tmp; tmp=$(mktemp)
+      jq --arg slug "$slug" --arg key "$deleted_key" \
+        'if has($slug) then (.[$key] = .[$slug] | del(.[$slug])) else . end' \
+        "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
+      echo "    Registry entry archived as: $deleted_key"
+    done
+    green "Drift cleanup complete. All data soft-deleted (renamed, not dropped)."
+  fi
+}
+
 cmd_help() {
   cat <<'EOF'
 AgentCenter.Cloud — Per-Client Deployment CLI
@@ -879,6 +983,11 @@ Commands:
 
   fix-migrations <slug>           Resolve failed/pending migrations and seed feature flags
                                     Safe for healthy clients (idempotent)
+
+  orphans                         Detect registry/database drift:
+                                    • Registry entries with no database
+                                    • Databases with no registry entry
+                                  Use --fix to remove orphaned entries (with --confirm)
 
   issue-license <slug> [plan]     Issue a license (starter|pro|enterprise)
                                     Hosted: injects token and restarts container
@@ -929,6 +1038,7 @@ case "$COMMAND" in
   disable)       cmd_disable "$@" ;;
   set-plan)      cmd_set_plan "$@" ;;
   issue-license) cmd_issue_license "$@" ;;
+  orphans)       cmd_orphans "$@" ;;
   help|--help|-h) cmd_help ;;
   *) die "Unknown command: $COMMAND. Run './ac help' for usage." ;;
 esac
