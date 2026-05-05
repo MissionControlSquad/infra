@@ -33,7 +33,7 @@ function run(command: string, timeout = 30_000, env?: Record<string, string>): s
     }).trim();
   } catch (err: unknown) {
     const e = err as { stderr?: string; stdout?: string; message?: string };
-    throw new Error(e.stderr || e.stdout || e.message || "Command failed");
+    throw new Error([e.stderr, e.stdout].filter(Boolean).join("\n") || e.message || "Command failed");
   }
 }
 
