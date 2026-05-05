@@ -2,6 +2,8 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { syncRefreshTokenToRegistry } from "./registry";
+import { LICENSE_PLANS, LicensePlan } from "./constants";
+export type { LicensePlan };
 
 // ── RSA Key Management ─────────────────────────────────────────
 
@@ -69,7 +71,7 @@ export interface AccessTokenPayload {
   lid: string;       // license ID
   sub: string;       // client slug
   org: string;
-  plan: "starter" | "pro" | "enterprise";
+  plan: LicensePlan;
   maxAgents: number;
   maxProjects: number;
   maxSeats: number;
@@ -116,9 +118,9 @@ function loadPlanConfig(): PlanConfig {
     // Fallback if config file not found
     return {
       plans: {
-        starter: { maxAgents: 5, maxProjects: 10, maxSeats: 3, features: ["channels", "documents", "agent_queue"] },
-        pro: { maxAgents: 25, maxProjects: 50, maxSeats: 10, features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications", "live_gateway"] },
-        enterprise: { maxAgents: -1, maxProjects: -1, maxSeats: -1, features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications", "live_gateway"] },
+        starter: { maxAgents: 5, maxProjects: 3, maxSeats: 3, features: ["channels", "documents", "agent_queue"] },
+        pro: { maxAgents: 15, maxProjects: 15, maxSeats: 10, features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications", "live_gateway"] },
+        scale: { maxAgents: 50, maxProjects: 50, maxSeats: -1, features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications", "live_gateway"] },
       },
       allFeatures: [],
     };
@@ -364,7 +366,7 @@ export interface LicenseEntry {
   id: string;
   slug: string;
   org: string;
-  plan: "starter" | "pro" | "enterprise";
+  plan: LicensePlan;
   refreshToken: string;
   maxAgents: number;
   maxProjects: number;
@@ -400,7 +402,7 @@ function writeLicenseRegistry(registry: Record<string, LicenseEntry>) {
 export function issueLicense(
   slug: string,
   org: string,
-  plan: "starter" | "pro" | "enterprise",
+  plan: LicensePlan,
   overrides?: Partial<{ maxAgents: number; maxProjects: number; maxSeats: number; features: string[] }>,
 ): { entry: LicenseEntry; refreshToken: string; accessToken: string } {
   const registry = readLicenseRegistry();
@@ -479,7 +481,7 @@ export function reactivateLicense(slug: string): boolean {
 /** Update plan/limits for an existing license */
 export function updateLicensePlan(
   slug: string,
-  plan: "starter" | "pro" | "enterprise",
+  plan: LicensePlan,
   overrides?: Partial<{ maxAgents: number; maxProjects: number; maxSeats: number; features: string[] }>,
 ): LicenseEntry | null {
   const registry = readLicenseRegistry();

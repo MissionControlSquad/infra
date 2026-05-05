@@ -744,9 +744,9 @@ cmd_set_plan() {
   local slug plan
   slug=$(require_slug "${1:-}")
   plan="${2:-}"
-  [ -n "$plan" ] || die "Usage: $0 set-plan <slug> <starter|pro|enterprise>"
+  [ -n "$plan" ] || die "Usage: $0 set-plan <slug> <starter|pro|scale>"
   [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
-  [[ "$plan" =~ ^(starter|pro|enterprise)$ ]] || die "Unknown plan: $plan. Use: starter, pro, enterprise"
+  [[ "$plan" =~ ^(starter|pro|scale)$ ]] || die "Unknown plan: $plan. Use: starter, pro, scale"
 
   # 1. Update license to new plan
   echo "  Updating license..."
@@ -810,7 +810,7 @@ cmd_issue_license() {
   plan="${2:-starter}"
 
   [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
-  [[ "$plan" =~ ^(starter|pro|enterprise)$ ]] || die "Invalid plan: $plan. Use: starter, pro, enterprise"
+  [[ "$plan" =~ ^(starter|pro|scale)$ ]] || die "Invalid plan: $plan. Use: starter, pro, scale"
 
   local name
   name=$(jq -r ".\"$slug\".name // \"$slug\"" "$REGISTRY")
@@ -1004,14 +1004,14 @@ Commands:
                                     • Databases with no registry entry
                                   Use --fix to remove orphaned entries (with --confirm)
 
-  issue-license <slug> [plan]     Issue a license (starter|pro|enterprise)
+  issue-license <slug> [plan]     Issue a license (starter|pro|scale)
                                     Hosted: injects token and restarts container
                                     Self-hosted: prints token to give to client
 
   features <slug>                 List feature flags for a client
   enable <slug> <feature>         Enable a feature for a client
   disable <slug> <feature>        Disable a feature for a client
-  set-plan <slug> <plan>          Change plan (starter|pro|enterprise)
+  set-plan <slug> <plan>          Change plan (starter|pro|scale)
                                     Updates license + feature flags together
 
   help                            Show this help message

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, use } from "react";
 import { useRouter } from "next/navigation";
+import { LICENSE_PLANS, PLAN_LABELS, PLAN_COLORS, PLAN_META, PLAN_STARTER, planBadgeClass } from "@/lib/constants";
 
 interface LicenseInfo {
   id: string;
@@ -79,7 +80,7 @@ export default function ClientDetailPage({
   const [settingPlan, setSettingPlan] = useState(false);
   const [showLicenseModal, setShowLicenseModal] = useState(false);
   const [issuingLicense, setIssuingLicense] = useState(false);
-  const [licensePlan, setLicensePlan] = useState("starter");
+  const [licensePlan, setLicensePlan] = useState<string>(PLAN_STARTER);
   const [licenseResult, setLicenseResult] = useState<{ refreshToken: string } | null>(null);
   const [licenseError, setLicenseError] = useState("");
   const [copiedToken, setCopiedToken] = useState(false);
@@ -598,13 +599,7 @@ export default function ClientDetailPage({
               <div>
                 <p className="text-xs text-zinc-500 mb-1">Plan</p>
                 <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                    client.license.plan === "enterprise"
-                      ? "bg-amber-500/10 text-amber-400"
-                      : client.license.plan === "pro"
-                      ? "bg-blue-500/10 text-blue-400"
-                      : "bg-zinc-700/50 text-zinc-400"
-                  }`}
+                  className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize ${planBadgeClass(client.license.plan)}`}
                 >
                   {client.license.plan}
                 </span>
@@ -703,7 +698,7 @@ export default function ClientDetailPage({
               {client.license.active ? (
                 <>
                   <div className="flex gap-1.5">
-                    {(["starter", "pro", "enterprise"] as const).map((plan) => (
+                    {LICENSE_PLANS.map((plan) => (
                       <button
                         key={plan}
                         onClick={() => handleUpdateLicensePlan(plan)}
@@ -819,14 +814,14 @@ export default function ClientDetailPage({
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-lg font-medium">Feature Flags</h2>
             <div className="flex gap-2">
-              {["free", "pro", "enterprise"].map((plan) => (
+              {LICENSE_PLANS.map((plan) => (
                 <button
                   key={plan}
                   onClick={() => handleSetPlan(plan)}
                   disabled={settingPlan}
                   className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded text-xs font-medium capitalize transition-colors cursor-pointer"
                 >
-                  {plan}
+                  {PLAN_LABELS[plan]}
                 </button>
               ))}
             </div>
@@ -912,29 +907,8 @@ export default function ClientDetailPage({
 
             {/* Plan cards */}
             <div className="grid grid-cols-3 gap-3">
-              {([
-                {
-                  key: "starter" as const,
-                  label: "Starter",
-                  agents: 5, projects: 10, seats: 3,
-                  features: ["channels", "documents", "agent_queue"],
-                  color: "zinc",
-                },
-                {
-                  key: "pro" as const,
-                  label: "Pro",
-                  agents: 25, projects: 50, seats: 10,
-                  features: ["channels", "documents", "agent_queue", "reviews", "recurring_tasks", "notifications", "live_gateway"],
-                  color: "blue",
-                },
-                {
-                  key: "enterprise" as const,
-                  label: "Enterprise",
-                  agents: -1, projects: -1, seats: -1,
-                  features: ["channels", "analytics", "recurring_tasks", "cloud_vms", "reviews", "documents", "agent_queue", "notifications", "live_gateway"],
-                  color: "amber",
-                },
-              ]).map((plan) => {
+              {LICENSE_PLANS.map((key) => {
+                const plan = { key, label: PLAN_LABELS[key], color: PLAN_COLORS[key], ...PLAN_META[key] };
                 const isSelected = licensePlan === plan.key;
                 return (
                   <button

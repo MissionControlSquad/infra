@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CLIENT_TYPE, ClientType } from "@/lib/constants";
+import { CLIENT_TYPE, ClientType, planBadgeClass } from "@/lib/constants";
 
 interface Client {
   slug: string;
@@ -307,13 +307,7 @@ export default function HomePage() {
                   Object.entries(clientStats.byPlan).map(([plan, count]) => (
                     <span
                       key={plan}
-                      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                        plan === "enterprise"
-                          ? "bg-amber-500/10 text-amber-400"
-                          : plan === "pro"
-                          ? "bg-blue-500/10 text-blue-400"
-                          : "bg-zinc-700/50 text-zinc-400"
-                      }`}
+                      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize ${planBadgeClass(plan)}`}
                     >
                       {plan}: {count}
                     </span>
@@ -422,13 +416,7 @@ export default function HomePage() {
                   <td className="px-4 py-3">
                     {c.license ? (
                       <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                          c.license.plan === "enterprise"
-                            ? "bg-amber-500/10 text-amber-400"
-                            : c.license.plan === "pro"
-                            ? "bg-blue-500/10 text-blue-400"
-                            : "bg-zinc-700/50 text-zinc-400"
-                        }`}
+                        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize ${planBadgeClass(c.license.plan)}`}
                       >
                         {c.license.plan}
                       </span>
