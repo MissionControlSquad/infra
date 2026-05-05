@@ -12,6 +12,7 @@ import {
 import { getClient } from "@/lib/registry";
 import { triggerLicenseRefresh } from "@/lib/shell";
 import { logAudit } from "@/lib/audit";
+import { LICENSE_PLANS, PLAN_STARTER } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -76,9 +77,9 @@ export async function POST(
   }
 
   const body = await req.json();
-  const plan = body.plan || "starter";
+  const plan = body.plan || PLAN_STARTER;
 
-  if (!["starter", "pro", "enterprise"].includes(plan)) {
+  if (!(LICENSE_PLANS as readonly string[]).includes(plan)) {
     return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
   }
 

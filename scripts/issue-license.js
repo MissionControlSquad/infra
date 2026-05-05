@@ -127,7 +127,7 @@ if (!slug || !org || !plan) {
 }
 
 if (!PLAN_DEFAULTS[plan]) {
-  console.error(`Invalid plan: ${plan}. Use: starter, pro, enterprise`);
+  console.error(`Invalid plan: ${plan}. Use: starter, pro, scale`);
   process.exit(1);
 }
 
