@@ -85,6 +85,7 @@ export function upgradeClient(slug: string, version: string): string {
 }
 
 export function fixMigrations(slug: string): string {
+  assertValidSlug(slug);
   return run(`${AC_PATH} fix-migrations ${slug}`, 180_000);
 }
 
