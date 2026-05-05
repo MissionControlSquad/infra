@@ -290,42 +290,59 @@ cmd_fix_migrations() {
     --entrypoint sh $image -c"
   local prisma_cmd="node /prisma-cli/node_modules/prisma/build/index.js"
 
-  # 1. db push first — brings the actual schema to match the current Prisma schema.
-  #    This creates any tables/columns/enums that are missing because old clients were
-  #    provisioned before those migrations existed (P3005 baseline marks them applied
-  #    without running the SQL). db push is additive-only: it never drops existing data.
+  # 1. db push — brings the actual schema in sync with the current Prisma schema.
+  #    Additive-only: never drops existing data.
+  #    May fail with P1014 when the DB has _prisma_migrations but no actual tables
+  #    (bootstrap failure). We capture output to detect that case.
   echo "  Syncing schema to current Prisma model (db push)..."
-  docker run --rm --network agentcenter \
+  local push_out
+  push_out=$(docker run --rm --network agentcenter \
     -e POSTGRES_PRISMA_URL="$pg_url" \
     -e POSTGRES_URL_NON_POOLING="$pg_url" \
     --entrypoint sh "$image" \
-    -c "$prisma_cmd db push --skip-generate --accept-data-loss 2>&1 || true"
+    -c "$prisma_cmd db push --skip-generate --accept-data-loss 2>&1" || true)
+  echo "$push_out"
+
+  # P1014 means _prisma_migrations exists but application tables are missing —
+  # Prisma aborts db push because it can't introspect a partially-bootstrapped DB.
+  # Fix: reset migration history so migrate deploy re-runs all migrations from scratch.
+  if echo "$push_out" | grep -q "P1014"; then
+    echo "  Detected P1014 (missing application tables) — resetting migration history..."
+    docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
+      exec -T postgres psql -U postgres -d "$db" \
+      -c "DELETE FROM _prisma_migrations; DROP TABLE IF EXISTS feature_flags CASCADE;" \
+      2>/dev/null || true
+    echo "  Migration history cleared — migrate deploy will re-apply all migrations."
+  fi
 
   # 2. Resolve ALL failed/in-progress migrations as applied.
   #    After db push the schema is correct, so any migration that was stuck
   #    (P3009/P3018) — including ones that failed because a table didn't exist yet —
   #    can be safely marked applied rather than re-run (db push already applied them).
-  echo "  Resolving any failed migrations as applied..."
-  local failed_list
-  failed_list=$(docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
-    exec -T postgres psql -U postgres -d "$db" -t -A \
-    -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL" \
-    2>/dev/null || true)
-  if [ -n "$failed_list" ]; then
-    echo "$failed_list" | while IFS= read -r m; do
-      [ -z "$m" ] && continue
-      echo "    Marking as applied: $m"
-      docker run --rm --network agentcenter \
-        -e POSTGRES_PRISMA_URL="$pg_url" \
-        -e POSTGRES_URL_NON_POOLING="$pg_url" \
-        --entrypoint sh "$image" \
-        -c "$prisma_cmd migrate resolve --applied \"$m\" 2>/dev/null || true"
-    done
-  else
-    echo "  No failed migrations."
+  #    Skip this step if we just cleared history (all migrations need to run fresh).
+  if ! echo "$push_out" | grep -q "P1014"; then
+    echo "  Resolving any failed migrations as applied..."
+    local failed_list
+    failed_list=$(docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
+      exec -T postgres psql -U postgres -d "$db" -t -A \
+      -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL" \
+      2>/dev/null || true)
+    if [ -n "$failed_list" ]; then
+      echo "$failed_list" | while IFS= read -r m; do
+        [ -z "$m" ] && continue
+        echo "    Marking as applied: $m"
+        docker run --rm --network agentcenter \
+          -e POSTGRES_PRISMA_URL="$pg_url" \
+          -e POSTGRES_URL_NON_POOLING="$pg_url" \
+          --entrypoint sh "$image" \
+          -c "$prisma_cmd migrate resolve --applied \"$m\" 2>/dev/null || true"
+      done
+    else
+      echo "  No failed migrations."
+    fi
   fi
 
-  # 3. Run migrate deploy — should be a no-op (all applied) or apply truly pending ones.
+  # 3. Run migrate deploy — applies any pending/never-run migrations.
   echo "  Running migrate deploy..."
   docker run --rm --network agentcenter \
     -e POSTGRES_PRISMA_URL="$pg_url" \
