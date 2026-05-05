@@ -970,15 +970,17 @@ cmd_restart_postgres() {
 }
 
 cmd_restart_all_clients() {
-  bold "Restarting all client containers..."
+  bold "Rolling restart of all client containers (one at a time)..."
   local count=0
   for slug in $(jq -r 'keys[] | select(startswith("deleted_") | not)' "$REGISTRY"); do
     [ -f "$CLIENTS_DIR/$slug.yml" ] || continue
     echo "  Restarting $slug..."
     compose_client "$slug" restart "app-$slug" 2>/dev/null || true
     count=$((count + 1))
+    # Brief pause between restarts so postgres isn't flooded with simultaneous reconnects
+    sleep 2
   done
-  green "Restarted $count client containers."
+  green "Rolling restart complete — $count client containers restarted."
 }
 
 cmd_help() {

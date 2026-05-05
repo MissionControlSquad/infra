@@ -326,13 +326,19 @@ export function listContainers(): { name: string; status: string; image: string 
 
 // ── Maintenance operations ──────────────────────────────────────
 
-export function terminateIdleConnections(): string {
+export function terminateIdleConnections(slug?: string): string {
+  if (slug !== undefined) assertValidSlug(slug);
+  const dbFilter = slug
+    ? `AND datname = 'client_${slug}'`
+    : "AND datname IS NOT NULL";
   try {
-    return run(
+    const count = run(
       `docker exec agentcenter-postgres-1 psql -U postgres -t -A -c ` +
-      `"SELECT COUNT(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle' AND pid != pg_backend_pid()) t"`,
+      `"SELECT COUNT(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle' AND pid != pg_backend_pid() ${dbFilter}) t"`,
       15_000
-    ) + " idle connections terminated";
+    );
+    const label = slug ? `client_${slug}` : "all databases";
+    return `${count.trim()} idle connections terminated (${label})`;
   } catch (err) {
     throw new Error(err instanceof Error ? err.message : "Failed to terminate connections");
   }
@@ -352,7 +358,7 @@ export function getConnectionStats(): { database: string; count: number }[] {
   try {
     const raw = run(
       `docker exec agentcenter-postgres-1 psql -U postgres -t -A ` +
-      `-c "SELECT datname, COUNT(*) FROM pg_stat_activity WHERE datname IS NOT NULL GROUP BY datname ORDER BY count DESC"`,
+      `-c "SELECT datname, COUNT(*) FROM pg_stat_activity WHERE datname IS NOT NULL GROUP BY datname ORDER BY 2 DESC"`,
       10_000
     );
     return raw.split("\n").filter(Boolean).map((line) => {

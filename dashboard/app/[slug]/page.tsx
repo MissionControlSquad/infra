@@ -71,6 +71,8 @@ export default function ClientDetailPage({
   const [refreshingEnv, setRefreshingEnv] = useState(false);
   const [fixingMigrations, setFixingMigrations] = useState(false);
   const [migrationResult, setMigrationResult] = useState<string | null>(null);
+  const [terminatingConns, setTerminatingConns] = useState(false);
+  const [terminateResult, setTerminateResult] = useState<string | null>(null);
   const [flags, setFlags] = useState<{ key: string; enabled: boolean; managedBy: string; description: string }[]>([]);
   const [flagsLoading, setFlagsLoading] = useState(true);
   const [togglingFlag, setTogglingFlag] = useState<string | null>(null);
@@ -152,6 +154,15 @@ export default function ClientDetailPage({
     } finally {
       setRefreshingEnv(false);
     }
+  }
+
+  async function handleTerminateConnections() {
+    setTerminatingConns(true);
+    setTerminateResult(null);
+    const res = await fetch(`/api/clients/${slug}/terminate-connections`, { method: "POST" });
+    const data = await res.json();
+    setTerminateResult(res.ok ? data.output : (data.error || "Failed"));
+    setTerminatingConns(false);
   }
 
   async function handleRestart() {
@@ -473,6 +484,16 @@ export default function ClientDetailPage({
           )}
           {isHosted && (
             <button
+              onClick={handleTerminateConnections}
+              disabled={terminatingConns}
+              title="Terminate idle database connections for this client"
+              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+            >
+              {terminatingConns ? "Terminating..." : "Kill Idle Conns"}
+            </button>
+          )}
+          {isHosted && (
+            <button
               onClick={handleRestart}
               className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm font-medium transition-colors cursor-pointer"
             >
@@ -491,6 +512,12 @@ export default function ClientDetailPage({
       {migrationResult && (
         <div className={`px-4 py-3 rounded-lg text-sm ${migrationResult.includes("success") ? "bg-violet-500/10 text-violet-300" : "bg-red-500/10 text-red-400"}`}>
           {migrationResult}
+        </div>
+      )}
+
+      {terminateResult && (
+        <div className="px-4 py-3 rounded-lg text-sm bg-zinc-800 text-zinc-300">
+          {terminateResult}
         </div>
       )}
 
