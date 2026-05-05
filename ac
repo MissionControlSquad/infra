@@ -962,6 +962,25 @@ cmd_orphans() {
   fi
 }
 
+cmd_restart_postgres() {
+  bold "Restarting postgres (brief downtime for all clients)..."
+  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
+    up -d --force-recreate postgres
+  green "Postgres restarted."
+}
+
+cmd_restart_all_clients() {
+  bold "Restarting all client containers..."
+  local count=0
+  for slug in $(jq -r 'keys[] | select(startswith("deleted_") | not)' "$REGISTRY"); do
+    [ -f "$CLIENTS_DIR/$slug.yml" ] || continue
+    echo "  Restarting $slug..."
+    compose_client "$slug" restart "app-$slug" 2>/dev/null || true
+    count=$((count + 1))
+  done
+  green "Restarted $count client containers."
+}
+
 cmd_help() {
   cat <<'EOF'
 AgentCenter.Cloud — Per-Client Deployment CLI
@@ -1038,7 +1057,9 @@ case "$COMMAND" in
   disable)       cmd_disable "$@" ;;
   set-plan)      cmd_set_plan "$@" ;;
   issue-license) cmd_issue_license "$@" ;;
-  orphans)       cmd_orphans "$@" ;;
+  orphans)            cmd_orphans "$@" ;;
+  _restart-postgres)  cmd_restart_postgres ;;
+  _restart-all-clients) cmd_restart_all_clients ;;
   help|--help|-h) cmd_help ;;
   *) die "Unknown command: $COMMAND. Run './ac help' for usage." ;;
 esac

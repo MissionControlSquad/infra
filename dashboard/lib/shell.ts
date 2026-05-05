@@ -324,6 +324,46 @@ export function listContainers(): { name: string; status: string; image: string 
   }
 }
 
+// ── Maintenance operations ──────────────────────────────────────
+
+export function terminateIdleConnections(): string {
+  try {
+    return run(
+      `docker exec agentcenter-postgres-1 psql -U postgres -t -A -c ` +
+      `"SELECT COUNT(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle' AND pid != pg_backend_pid()) t"`,
+      15_000
+    ) + " idle connections terminated";
+  } catch (err) {
+    throw new Error(err instanceof Error ? err.message : "Failed to terminate connections");
+  }
+}
+
+export function restartPostgres(): string {
+  return run(`${AC_PATH} _restart-postgres`, 60_000);
+}
+
+export function refreshEnvAllAndRestart(): string {
+  const refreshOut = run(`${AC_PATH} refresh-env --all`, 120_000);
+  const restartOut = run(`${AC_PATH} _restart-all-clients`, 300_000);
+  return [refreshOut, restartOut].filter(Boolean).join("\n");
+}
+
+export function getConnectionStats(): { database: string; count: number }[] {
+  try {
+    const raw = run(
+      `docker exec agentcenter-postgres-1 psql -U postgres -t -A ` +
+      `-c "SELECT datname, COUNT(*) FROM pg_stat_activity WHERE datname IS NOT NULL GROUP BY datname ORDER BY count DESC"`,
+      10_000
+    );
+    return raw.split("\n").filter(Boolean).map((line) => {
+      const [database, count] = line.split("|");
+      return { database, count: parseInt(count, 10) || 0 };
+    });
+  } catch {
+    return [];
+  }
+}
+
 export function getSystemStats(): {
   memoryUsed: string;
   memoryTotal: string;

@@ -61,6 +61,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
+  const [maintenanceOutput, setMaintenanceOutput] = useState<string | null>(null);
+  const [maintenanceRunning, setMaintenanceRunning] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -122,6 +124,36 @@ export default function HomePage() {
     } else {
       const data = await res.json();
       alert(data.error || "Failed to restart");
+    }
+  }
+
+  async function runMaintenance(action: string, label: string, requiresPassword = false) {
+    let password: string | null = null;
+    if (requiresPassword) {
+      password = prompt(`Enter admin password to run "${label}":`);
+      if (!password) return;
+    }
+    setMaintenanceRunning(action);
+    setMaintenanceOutput(null);
+    try {
+      const res = await fetch("/api/system/maintenance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, password }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const out = typeof data.output === "string"
+          ? data.output
+          : JSON.stringify(data.output, null, 2);
+        setMaintenanceOutput(`✓ ${label}\n\n${out || "(no output)"}`);
+      } else {
+        setMaintenanceOutput(`✗ ${label}\n\n${data.error || "Failed"}`);
+      }
+    } catch {
+      setMaintenanceOutput(`✗ ${label}\n\nNetwork error`);
+    } finally {
+      setMaintenanceRunning(null);
     }
   }
 
@@ -194,7 +226,54 @@ export default function HomePage() {
                 </table>
               </div>
             )}
-          </>
+          {/* Maintenance actions */}
+          <div className="mt-4">
+            <p className="text-xs text-zinc-500 uppercase tracking-wider mb-3">Maintenance</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                disabled={!!maintenanceRunning}
+                onClick={() => runMaintenance("connection-stats", "Connection stats")}
+                className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 rounded transition-colors cursor-pointer"
+              >
+                {maintenanceRunning === "connection-stats" ? "Running..." : "Connection stats"}
+              </button>
+              <button
+                disabled={!!maintenanceRunning}
+                onClick={() => runMaintenance("terminate-idle", "Terminate idle connections")}
+                className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 rounded transition-colors cursor-pointer"
+              >
+                {maintenanceRunning === "terminate-idle" ? "Running..." : "Terminate idle connections"}
+              </button>
+              <button
+                disabled={!!maintenanceRunning}
+                onClick={() => runMaintenance("refresh-env-all", "Refresh all env files")}
+                className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 rounded transition-colors cursor-pointer"
+              >
+                {maintenanceRunning === "refresh-env-all" ? "Running..." : "Refresh all env files"}
+              </button>
+              <button
+                disabled={!!maintenanceRunning}
+                onClick={() => runMaintenance("refresh-and-restart", "Refresh env + restart all clients", true)}
+                className="px-3 py-1.5 text-xs bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 disabled:opacity-40 rounded transition-colors cursor-pointer"
+              >
+                {maintenanceRunning === "refresh-and-restart" ? "Running..." : "Refresh env + restart all clients"}
+              </button>
+              <button
+                disabled={!!maintenanceRunning}
+                onClick={() => runMaintenance("restart-postgres", "Restart postgres", true)}
+                className="px-3 py-1.5 text-xs bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-40 rounded transition-colors cursor-pointer"
+              >
+                {maintenanceRunning === "restart-postgres" ? "Restarting..." : "Restart postgres"}
+              </button>
+            </div>
+
+            {maintenanceOutput && (
+              <pre className="mt-3 p-3 bg-zinc-900 border border-zinc-800 rounded text-xs text-zinc-300 whitespace-pre-wrap overflow-x-auto max-h-64">
+                {maintenanceOutput}
+              </pre>
+            )}
+          </div>
+        </>
         )}
       </div>
 
