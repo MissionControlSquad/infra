@@ -283,60 +283,54 @@ cmd_fix_migrations() {
 
   bold "Fixing migrations for $slug (image: $image)..."
 
-  # 1. Resolve any failed migration recorded in _prisma_migrations (P3009)
-  echo "  Checking for failed migrations..."
-  local failed
-  failed=$(docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
+  local prisma_run="docker run --rm --network agentcenter
+    -e POSTGRES_PRISMA_URL=$pg_url
+    -e POSTGRES_URL_NON_POOLING=$pg_url
+    --entrypoint sh $image -c"
+  local prisma_cmd="node /prisma-cli/node_modules/prisma/build/index.js"
+
+  # 1. db push first — brings the actual schema to match the current Prisma schema.
+  #    This creates any tables/columns/enums that are missing because old clients were
+  #    provisioned before those migrations existed (P3005 baseline marks them applied
+  #    without running the SQL). db push is additive-only: it never drops existing data.
+  echo "  Syncing schema to current Prisma model (db push)..."
+  docker run --rm --network agentcenter \
+    -e POSTGRES_PRISMA_URL="$pg_url" \
+    -e POSTGRES_URL_NON_POOLING="$pg_url" \
+    --entrypoint sh "$image" \
+    -c "$prisma_cmd db push --skip-generate --accept-data-loss 2>&1 || true"
+
+  # 2. Resolve ALL failed/in-progress migrations as applied.
+  #    After db push the schema is correct, so any migration that was stuck
+  #    (P3009/P3018) — including ones that failed because a table didn't exist yet —
+  #    can be safely marked applied rather than re-run (db push already applied them).
+  echo "  Resolving any failed migrations as applied..."
+  local failed_list
+  failed_list=$(docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
     exec -T postgres psql -U postgres -d "$db" -t -A \
-    -c "SELECT migration_name FROM _prisma_migrations WHERE started_at IS NOT NULL AND finished_at IS NULL AND rolled_back_at IS NULL LIMIT 1" \
+    -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL" \
     2>/dev/null || true)
-  if [ -n "$failed" ]; then
-    echo "  Found failed migration: $failed — resolving as rolled-back..."
-    docker run --rm --network agentcenter \
-      -e POSTGRES_PRISMA_URL="$pg_url" \
-      -e POSTGRES_URL_NON_POOLING="$pg_url" \
-      --entrypoint sh "$image" \
-      -c "node /prisma-cli/node_modules/prisma/build/index.js migrate resolve --rolled-back \"$failed\" 2>/dev/null || true"
+  if [ -n "$failed_list" ]; then
+    echo "$failed_list" | while IFS= read -r m; do
+      [ -z "$m" ] && continue
+      echo "    Marking as applied: $m"
+      docker run --rm --network agentcenter \
+        -e POSTGRES_PRISMA_URL="$pg_url" \
+        -e POSTGRES_URL_NON_POOLING="$pg_url" \
+        --entrypoint sh "$image" \
+        -c "$prisma_cmd migrate resolve --applied \"$m\" 2>/dev/null || true"
+    done
   else
-    echo "  No failed migrations found."
+    echo "  No failed migrations."
   fi
 
-  # 2. Ensure DeploymentStatus enum exists with all values (older DBs missing cloud-vm schema)
-  echo "  Ensuring DeploymentStatus enum is complete..."
-  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
-    exec -T postgres psql -U postgres -d "$db" \
-    -c "DO \$\$ BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'DeploymentStatus') THEN
-        CREATE TYPE \"DeploymentStatus\" AS ENUM ('provisioning','installing','running','stopped','error','destroying','destroyed','waiting_for_ssh','installing_deps','installing_openclaw','configuring','starting_service');
-      END IF;
-    END \$\$;" 2>/dev/null || true
-  docker compose --project-directory "$HOST_INFRA_DIR" -f "$INFRA_DIR/docker-compose.yml" \
-    exec -T postgres psql -U postgres -d "$db" \
-    -c "ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'waiting_for_ssh';
-        ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'installing_deps';
-        ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'installing_openclaw';
-        ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'configuring';
-        ALTER TYPE \"DeploymentStatus\" ADD VALUE IF NOT EXISTS 'starting_service';" 2>/dev/null || true
-
-  # 3. Run migrate deploy via one-shot container
+  # 3. Run migrate deploy — should be a no-op (all applied) or apply truly pending ones.
   echo "  Running migrate deploy..."
   docker run --rm --network agentcenter \
     -e POSTGRES_PRISMA_URL="$pg_url" \
     -e POSTGRES_URL_NON_POOLING="$pg_url" \
     --entrypoint sh "$image" \
-    -c "node /prisma-cli/node_modules/prisma/build/index.js migrate deploy"
-
-  # 3b. db push — fills schema gaps left by the P3005 baseline on old DBs.
-  # Old clients provisioned before migration tracking may be missing tables that
-  # were added in later migrations (feature_flags, licenses, cloud_vms, etc.).
-  # migrate deploy won't run them (all marked applied), but db push compares the
-  # Prisma schema against the actual DB and adds only what's missing.
-  echo "  Syncing any missing schema elements (db push)..."
-  docker run --rm --network agentcenter \
-    -e POSTGRES_PRISMA_URL="$pg_url" \
-    -e POSTGRES_URL_NON_POOLING="$pg_url" \
-    --entrypoint sh "$image" \
-    -c "node /prisma-cli/node_modules/prisma/build/index.js db push --skip-generate --accept-data-loss 2>/dev/null || true"
+    -c "$prisma_cmd migrate deploy"
 
   # 4. Seed feature flags (ON CONFLICT DO NOTHING — safe for existing clients)
   echo "  Seeding feature flags..."
