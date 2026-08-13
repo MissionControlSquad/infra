@@ -136,13 +136,25 @@ export async function POST(req: NextRequest) {
     let output: string;
 
     if (process.env.NODE_ENV !== "production") {
-      // Local dev: skip Docker entirely, just write the registry entry
-      const { registerClient } = await import("@/lib/registry");
+      // Local dev: skip Docker entirely, just write the registry entry.
+      // Mirror the buildbase workspace creation in TypeScript so the same
+      // provisioning path is exercised without invoking `ac`. Best-effort:
+      // createBuildbaseWorkspace never throws — on failure the workspace id is
+      // empty and the tenant falls back to single-tenant (no cross-tenant gate).
+      const { registerClient, setClientWorkspaceId } = await import("@/lib/registry");
       registerClient(slug, name || slug, CLIENT_TYPE.HOSTED, email);
-      output = `[local] Registered "${slug}" in registry (skipped Docker)`;
+      const { createBuildbaseWorkspace } = await import("@/lib/buildbase");
+      const workspaceId = await createBuildbaseWorkspace(name || slug, email);
+      if (workspaceId) setClientWorkspaceId(slug, workspaceId);
+      output = `[local] Registered "${slug}" in registry (skipped Docker)` +
+        (workspaceId ? ` — buildbase workspace ${workspaceId}` : " — no buildbase workspace (single-tenant)");
     } else {
-      // Production: run ac create — throws on failure, caught by outer catch → 500
-      output = createClient(slug, name, version);
+      // Production: run ac create — it provisions the container AND creates +
+      // binds the tenant's buildbase workspace (passing --email), writing the
+      // workspaceId into the registry and TENANT_WORKSPACE_ID into the client
+      // env. `ac` is the single source of truth to avoid double-creating a
+      // workspace. Throws on failure, caught by outer catch → 500.
+      output = createClient(slug, name, version, email);
       if (email) {
         const { setClientEmail } = await import("@/lib/registry");
         setClientEmail(slug, email);

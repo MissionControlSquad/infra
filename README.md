@@ -80,6 +80,66 @@ POST /api/clients
 ```
 Returns `{ licenseKey: "<refresh_token>" }` immediately — no container wait.
 
+### buildbase Workspace-per-Tenant
+
+Each hosted tenant is bound to its own **buildbase (SaaSOS) workspace**. The
+monorepo app (running inside the tenant container) uses this to enforce that a
+human logging in is a member of *this* tenant's workspace — the cross-tenant
+gate. Provisioning creates the workspace and adds the owner as an owner-member.
+
+**Provisioning step** (`ac create` / `POST /api/clients`):
+
+1. Before templating the compose file, `ac` calls the buildbase workspace-create
+   API to make a workspace named for the tenant, then adds the owner email as an
+   owner-member.
+2. The returned `workspaceId` is stored in `clients/registry.json`
+   (`.<slug>.workspaceId`) and injected into the client container env as
+   `TENANT_WORKSPACE_ID`.
+3. The container also receives the shared platform buildbase config
+   (`SAAS_SERVER_URL`, `SAAS_ORG_ID`, `SAAS_CLIENT_ID`, `SAAS_CLIENT_SECRET`),
+   its public URL (`NEXT_PUBLIC_APP_URL`), and `AUTH_COOKIE_DOMAIN` (parent-domain
+   cookie for cross-subdomain SSO).
+
+**HARD PREREQUISITE.** Workspace creation requires:
+
+- The buildbase **org must allow workspace creation + member invites** — i.e.
+  **NOT** in `personal` mode (personal mode disables workspace creation).
+- A **service credential** (`BUILDBASE_SERVICE_SESSION_ID`) with
+  create-workspace + add-member permission.
+
+If either is missing, workspace creation **does not hard-fail** the provision:
+`ac` prints a warning, stores an empty `workspaceId`, and the tenant runs
+**single-tenant** (no cross-tenant gate — the monorepo bridge treats it as a
+single-tenant instance). Re-bind once the org is reconfigured:
+
+```bash
+./ac bind-workspace <slug> [--email owner@example.com]
+```
+
+`bind-workspace` (re)creates the workspace, stores the id, regenerates the
+compose file (injecting `TENANT_WORKSPACE_ID`), and restarts the container.
+
+> **Unverified:** the buildbase workspace API endpoints/shapes used here were
+> derived from the compiled `@buildbase/sdk` bundle, not a live server. Verify
+> them (`POST /api/v1/public/workspaces`, `POST
+> /api/v1/public/workspaces/<id>/users/add`, `x-session-id` auth) against the
+> live API once the org is out of personal mode. Route base/version are
+> overridable via `SAAS_API_BASEPATH` / `SAAS_API_VERSION` if they differ.
+
+### Infra Environment Variables (workspace-per-tenant)
+
+Add to `infra/.env` (see `.env.example`):
+
+| Variable | Description |
+|---|---|
+| `SAAS_SERVER_URL` | Platform buildbase server base URL (same for all tenants). |
+| `SAAS_ORG_ID` | Platform buildbase org id (same for all tenants). |
+| `SAAS_CLIENT_ID` | buildbase OAuth client id. |
+| `SAAS_CLIENT_SECRET` | buildbase OAuth client secret (server-only). |
+| `BUILDBASE_SERVICE_SESSION_ID` | Service session with create-workspace + add-member permission. Org must NOT be in `personal` mode. |
+| `AUTH_COOKIE_DOMAIN` | Parent-domain cookie for cross-subdomain SSO (default `.agentcenter.cloud`). |
+| `SAAS_API_VERSION` / `SAAS_API_BASEPATH` | Optional overrides if the live workspace routes are namespaced differently than the SDK default `/api/v1/public/...`. |
+
 ### Lookup by Email
 
 Used by the website to check if a tenant already exists for a user:

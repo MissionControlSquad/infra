@@ -25,6 +25,12 @@ export interface ClientEntry {
   /** Explicit provisioning state so callers know whether creation is still in progress. */
   provisioningStatus?: ProvisioningStatus;
   provisioningAttempts?: number;
+  /**
+   * The buildbase workspace this tenant's container is bound to. Empty/undefined
+   * ⇒ the tenant runs single-tenant (no cross-tenant gate) until re-bound via
+   * `ac bind-workspace <slug>`.
+   */
+  workspaceId?: string;
 }
 
 export type Registry = Record<string, ClientEntry>;
@@ -137,6 +143,22 @@ export function setClientEmail(slug: string, email: string): void {
     fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
   } catch {
     // non-fatal
+  }
+}
+
+/**
+ * Persist the buildbase workspace id for a tenant so `ac`/compose regeneration
+ * can inject it as TENANT_WORKSPACE_ID. Non-fatal on failure.
+ */
+export function setClientWorkspaceId(slug: string, workspaceId: string): void {
+  try {
+    const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
+    const registry = JSON.parse(raw) as Registry;
+    if (!registry[slug]) return;
+    registry[slug].workspaceId = workspaceId;
+    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  } catch {
+    // non-fatal — the container falls back to single-tenant until re-bound
   }
 }
 

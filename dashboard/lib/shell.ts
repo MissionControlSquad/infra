@@ -37,10 +37,22 @@ function run(command: string, timeout = 30_000, env?: Record<string, string>): s
   }
 }
 
-export function createClient(slug: string, name?: string, version?: string): string {
+export function createClient(slug: string, name?: string, version?: string, email?: string): string {
   const nameFlag = name ? ` --name "${name.replace(/"/g, '\\"')}"` : "";
   const versionFlag = version ? ` --version ${version}` : "";
-  return run(`${AC_PATH} create ${slug}${nameFlag}${versionFlag}`, 120_000);
+  // Pass the owner email so `ac create` provisions + binds the tenant's buildbase
+  // workspace (single source of truth for the TENANT_WORKSPACE_ID injected into
+  // the generated client env). Basic guard against shell metacharacters.
+  const safeEmail = email && /^[^\s"'`$();|&<>]+$/.test(email) ? email : "";
+  const emailFlag = safeEmail ? ` --email ${safeEmail}` : "";
+  return run(`${AC_PATH} create ${slug}${nameFlag}${versionFlag}${emailFlag}`, 120_000);
+}
+
+/** (Re)create + bind the buildbase workspace for an existing tenant via `ac`. */
+export function bindWorkspace(slug: string, email?: string): string {
+  const safeEmail = email && /^[^\s"'`$();|&<>]+$/.test(email) ? email : "";
+  const emailFlag = safeEmail ? ` --email ${safeEmail}` : "";
+  return run(`${AC_PATH} bind-workspace ${slug}${emailFlag}`, 120_000);
 }
 
 export function deleteClient(slug: string): string {
