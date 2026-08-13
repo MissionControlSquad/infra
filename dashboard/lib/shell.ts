@@ -37,22 +37,29 @@ function run(command: string, timeout = 30_000, env?: Record<string, string>): s
   }
 }
 
-export function createClient(slug: string, name?: string, version?: string, email?: string): string {
+export function createClient(
+  slug: string,
+  name?: string,
+  version?: string,
+  email?: string,
+  workspaceId?: string
+): string {
   const nameFlag = name ? ` --name "${name.replace(/"/g, '\\"')}"` : "";
   const versionFlag = version ? ` --version ${version}` : "";
-  // Pass the owner email so `ac create` provisions + binds the tenant's buildbase
-  // workspace (single source of truth for the TENANT_WORKSPACE_ID injected into
-  // the generated client env). Basic guard against shell metacharacters.
-  const safeEmail = email && /^[^\s"'`$();|&<>]+$/.test(email) ? email : "";
-  const emailFlag = safeEmail ? ` --email ${safeEmail}` : "";
-  return run(`${AC_PATH} create ${slug}${nameFlag}${versionFlag}${emailFlag}`, 120_000);
+  // Basic guard against shell metacharacters for values interpolated into the
+  // command line. The owner email + the caller-provided buildbase workspace id
+  // (which `ac` injects as TENANT_WORKSPACE_ID) are passed through as flags.
+  const shellSafe = (v?: string) => (v && /^[^\s"'`$();|&<>]+$/.test(v) ? v : "");
+  const emailFlag = shellSafe(email) ? ` --email ${shellSafe(email)}` : "";
+  const workspaceFlag = shellSafe(workspaceId) ? ` --workspace-id ${shellSafe(workspaceId)}` : "";
+  return run(`${AC_PATH} create ${slug}${nameFlag}${versionFlag}${emailFlag}${workspaceFlag}`, 120_000);
 }
 
-/** (Re)create + bind the buildbase workspace for an existing tenant via `ac`. */
-export function bindWorkspace(slug: string, email?: string): string {
-  const safeEmail = email && /^[^\s"'`$();|&<>]+$/.test(email) ? email : "";
-  const emailFlag = safeEmail ? ` --email ${safeEmail}` : "";
-  return run(`${AC_PATH} bind-workspace ${slug}${emailFlag}`, 120_000);
+/** Set/change the buildbase workspace id on an existing tenant via `ac`. */
+export function setWorkspace(slug: string, workspaceId: string): string {
+  const safe = /^[^\s"'`$();|&<>]+$/.test(workspaceId) ? workspaceId : "";
+  if (!safe) throw new Error(`Invalid workspace id: "${workspaceId}"`);
+  return run(`${AC_PATH} set-workspace ${slug} --workspace-id ${safe}`, 120_000);
 }
 
 export function deleteClient(slug: string): string {

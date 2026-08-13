@@ -84,7 +84,7 @@ insert_domain_labels() {
 # ── Commands ─────────────────────────────────────────────────────────
 
 cmd_create() {
-  local slug name version="latest" email=""
+  local slug name version="latest" email="" workspace_id=""
   slug=$(require_slug "${1:-}")
   shift
   name="$slug"
@@ -94,6 +94,10 @@ cmd_create() {
       --name) name="$2"; shift 2 ;;
       --version) version="$2"; shift 2 ;;
       --email) email="$2"; shift 2 ;;
+      # The buildbase workspace this tenant binds to. buildbase auto-creates each
+      # user's workspace on signup, so infra RECEIVES the id from the caller (the
+      # website passes the user's currentWorkspace). Empty ⇒ single-tenant.
+      --workspace-id) workspace_id="$2"; shift 2 ;;
       *) die "Unknown option: $1" ;;
     esac
   done
@@ -133,13 +137,12 @@ cmd_create() {
     echo "  License issued (starter plan)"
   fi
 
-  # 4b. Create the tenant's buildbase workspace (best-effort — never hard-fails).
-  #     On failure workspace_id is empty and the tenant falls back to single-tenant.
-  local workspace_id
-  echo "  Creating buildbase workspace..."
-  workspace_id=$(create_buildbase_workspace "$slug" "$name" "$email")
+  # 4b. Bind the tenant to its buildbase workspace (id passed in by the caller).
+  #     Empty ⇒ single-tenant (self-host) — that's fine.
   if [ -n "$workspace_id" ]; then
-    green "  buildbase workspace created: $workspace_id"
+    echo "  Binding buildbase workspace: $workspace_id"
+  else
+    echo "  No workspace id provided — tenant runs single-tenant."
   fi
 
   # 5. Generate compose file from template
@@ -187,43 +190,27 @@ cmd_create() {
   echo "  Ver: $version"
 }
 
-# (Re)create + bind a buildbase workspace for an EXISTING tenant. Use this after
-# the org has been reconfigured out of "personal" mode / once a valid service
-# credential is available, to bind a tenant that was provisioned without one.
-cmd_bind_workspace() {
-  local slug email=""
+# Set the buildbase workspace id on an EXISTING tenant + regenerate the compose.
+# buildbase auto-creates each user's workspace on signup; infra just RECEIVES the
+# id. Use this to bind a tenant that was provisioned without one, or to change it.
+cmd_set_workspace() {
+  local slug workspace_id=""
   slug=$(require_slug "${1:-}")
   shift || true
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --email) email="$2"; shift 2 ;;
+      --workspace-id) workspace_id="$2"; shift 2 ;;
       *) die "Unknown option: $1" ;;
     esac
   done
 
   [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+  [ -n "$workspace_id" ] || die "Usage: $0 set-workspace <slug> --workspace-id <id>"
 
-  local name existing_ws
-  name=$(jq -r ".\"$slug\".name // \"$slug\"" "$REGISTRY")
-  existing_ws=$(jq -r ".\"$slug\".workspaceId // \"\"" "$REGISTRY")
-  # Fall back to the email already stored on the registry entry.
-  [ -n "$email" ] || email=$(jq -r ".\"$slug\".email // \"\"" "$REGISTRY")
+  bold "Setting buildbase workspace for '$slug' → $workspace_id"
 
-  if [ -n "$existing_ws" ]; then
-    bold "Client '$slug' already bound to workspace '$existing_ws' — re-creating/re-binding."
-  else
-    bold "Binding buildbase workspace for '$slug'..."
-  fi
-
-  local workspace_id
-  workspace_id=$(create_buildbase_workspace "$slug" "$name" "$email")
-
-  if [ -z "$workspace_id" ]; then
-    die "Workspace creation failed — see warnings above. Verify the org is out of 'personal' mode and BUILDBASE_SERVICE_SESSION_ID is valid, then retry."
-  fi
-
-  # Persist the new workspace id in the registry.
+  # Persist the workspace id in the registry.
   local tmp
   tmp=$(mktemp)
   jq --arg slug "$slug" --arg wsid "$workspace_id" \
@@ -239,7 +226,7 @@ cmd_bind_workspace() {
   echo "  Restarting container..."
   compose_client "$slug" up -d "app-$slug"
 
-  green "Workspace bound for '$slug': $workspace_id"
+  green "Workspace set for '$slug': $workspace_id"
 }
 
 cmd_delete() {
@@ -862,99 +849,6 @@ cmd_set_plan() {
   cmd_features "$slug"
 }
 
-# ── buildbase (SaaSOS) Workspace Provisioning ─────────────────────────
-#
-# Creates the per-tenant buildbase workspace and adds the owner as a member.
-#
-# !!! VERIFY THESE CALLS AGAINST THE LIVE BUILDBASE API !!!
-# The endpoints/shapes below were reverse-engineered from the compiled SDK
-# (@buildbase/sdk dist/index.cjs + index.d.ts). They are UNVERIFIED against a
-# running server because this environment has no valid service credential and
-# the org is in "personal" mode (workspace creation disabled). Confirm the
-# path, auth header, request body and response shape once the org is
-# reconfigured, then remove this warning.
-#
-# Reference (SDK WorkspaceApi):
-#   baseUrl  = `${serverUrl}/api/${version}/${basePath}`  (version "v1",
-#              WorkspaceApi basePath defaults to "public")
-#   create   = fetchJson("workspaces", {method:"POST", body:{name, image?}})
-#              → POST ${SAAS_SERVER_URL}/api/v1/public/workspaces
-#              → returns IWorkspace { _id, workspaceId, name, ... }
-#   addUser  = fetchJson(`workspaces/${id}/users/add`, {method:"POST",
-#                          body:{email, role}})
-#              → POST .../api/v1/public/workspaces/<id>/users/add
-#   auth     = getAuthHeaders() → { "x-session-id": <sessionId> }
-#              (org is derived server-side from the service session; SAAS_ORG_ID
-#               is the SDK's client-side guard. If the live API also needs the
-#               org in a header/path, wire SAAS_ORG_ID in here.)
-#
-# Requires (from infra/.env):
-#   SAAS_SERVER_URL              platform buildbase base URL
-#   BUILDBASE_SERVICE_SESSION_ID service session id with create-workspace +
-#                                add-member permission (org must NOT be in
-#                                "personal" mode)
-
-# Base path segment for the buildbase workspace API. Overridable via .env in
-# case the live server namespaces workspace routes differently (VERIFY).
-SAAS_API_VERSION="${SAAS_API_VERSION:-v1}"
-SAAS_API_BASEPATH="${SAAS_API_BASEPATH:-public}"
-
-# Create the tenant's buildbase workspace + add the owner as an owner-member.
-# Echoes the resulting workspaceId on success, or empty string on failure.
-# Never hard-fails the caller: on failure it warns and returns empty so that
-# provisioning still completes (tenant falls back to single-tenant mode).
-create_buildbase_workspace() {
-  local slug="$1" name="$2" email="$3"
-
-  if [ -z "${SAAS_SERVER_URL:-}" ] || [ -z "${BUILDBASE_SERVICE_SESSION_ID:-}" ]; then
-    red "  Warning: SAAS_SERVER_URL / BUILDBASE_SERVICE_SESSION_ID not set — skipping buildbase workspace creation." >&2
-    red "  Tenant '$slug' will run single-tenant (no cross-tenant gate). Re-bind later with: ./ac bind-workspace $slug" >&2
-    echo ""
-    return 0
-  fi
-
-  local base="${SAAS_SERVER_URL%/}/api/${SAAS_API_VERSION}/${SAAS_API_BASEPATH}"
-
-  # 1. Create the workspace (VERIFY endpoint/shape against live buildbase API).
-  local create_resp
-  create_resp=$(curl -sS -X POST "${base}/workspaces" \
-    -H "Content-Type: application/json" \
-    -H "x-session-id: ${BUILDBASE_SERVICE_SESSION_ID}" \
-    -d "$(jq -nc --arg name "$name" '{name: $name}')" 2>/dev/null || true)
-
-  local wsid
-  wsid=$(echo "$create_resp" | jq -r '(.workspaceId // ._id // empty)' 2>/dev/null || true)
-
-  if [ -z "$wsid" ]; then
-    red "  Warning: buildbase workspace creation failed for '$slug'." >&2
-    red "  Response: ${create_resp:-<empty>}" >&2
-    red "  Likely causes: org in 'personal' mode (workspace creation disabled)," >&2
-    red "  invalid/expired service session, or missing permission." >&2
-    red "  Tenant will run single-tenant. Re-bind later with: ./ac bind-workspace $slug" >&2
-    echo ""
-    return 0
-  fi
-
-  # 2. Add the owner as an owner-member (VERIFY endpoint/shape; role name may
-  #    differ — "owner" is assumed). Non-fatal: workspace already exists.
-  if [ -n "$email" ]; then
-    local add_resp
-    add_resp=$(curl -sS -X POST "${base}/workspaces/${wsid}/users/add" \
-      -H "Content-Type: application/json" \
-      -H "x-session-id: ${BUILDBASE_SERVICE_SESSION_ID}" \
-      -d "$(jq -nc --arg email "$email" '{email: $email, role: "owner"}')" 2>/dev/null || true)
-    local added
-    added=$(echo "$add_resp" | jq -r '(.userId // .message // empty)' 2>/dev/null || true)
-    if [ -z "$added" ]; then
-      red "  Warning: workspace '$wsid' created but adding owner '$email' failed." >&2
-      red "  Response: ${add_resp:-<empty>}. Add the member manually or re-run ./ac bind-workspace $slug." >&2
-    fi
-  fi
-
-  echo "$wsid"
-  return 0
-}
-
 # ── License Helpers ──────────────────────────────────────────────────
 
 # Issue a license token using the Node.js helper script.
@@ -1152,13 +1046,13 @@ Usage: ./ac <command> [args]
 
 Commands:
   create <slug> [--name "Name"] [--version <tag>] [--email <addr>]
-                                  Provision a new client (also creates its
-                                    buildbase workspace when a service
-                                    credential is configured)
-  bind-workspace <slug> [--email <addr>]
-                                  (Re)create + bind the buildbase workspace for
-                                    an existing tenant (use after the org is
-                                    reconfigured out of "personal" mode)
+                [--workspace-id <id>]
+                                  Provision a new client. Pass --workspace-id to
+                                    bind the tenant to the caller's buildbase
+                                    workspace (omit ⇒ single-tenant / self-host)
+  set-workspace <slug> --workspace-id <id>
+                                  Set/change the buildbase workspace id on an
+                                    existing tenant + regenerate its compose
   delete <slug> --confirm         Remove a client and its database
   list                            List all clients and their status
   logs <slug>                     Tail logs for a client
@@ -1190,8 +1084,8 @@ Commands:
   help                            Show this help message
 
 Examples:
-  ./ac create acme --name "Acme Corp" --version 1.2.0 --email owner@acme.com
-  ./ac bind-workspace acme --email owner@acme.com
+  ./ac create acme --name "Acme Corp" --version 1.2.0 --workspace-id ws_abc123
+  ./ac set-workspace acme --workspace-id ws_abc123
   ./ac list
   ./ac logs acme
   ./ac update --all
@@ -1212,7 +1106,7 @@ shift || true
 
 case "$COMMAND" in
   create)        cmd_create "$@" ;;
-  bind-workspace) cmd_bind_workspace "$@" ;;
+  set-workspace) cmd_set_workspace "$@" ;;
   delete)        cmd_delete "$@" ;;
   list)          cmd_list ;;
   logs)          cmd_logs "$@" ;;

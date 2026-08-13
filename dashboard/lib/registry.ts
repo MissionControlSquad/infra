@@ -26,9 +26,10 @@ export interface ClientEntry {
   provisioningStatus?: ProvisioningStatus;
   provisioningAttempts?: number;
   /**
-   * The buildbase workspace this tenant's container is bound to. Empty/undefined
-   * ⇒ the tenant runs single-tenant (no cross-tenant gate) until re-bound via
-   * `ac bind-workspace <slug>`.
+   * The buildbase workspace this tenant's container is bound to (id passed in by
+   * the caller at provision time). Empty/undefined ⇒ the tenant runs
+   * single-tenant (no cross-tenant gate); set later via
+   * `ac set-workspace <slug> --workspace-id <id>`.
    */
   workspaceId?: string;
 }

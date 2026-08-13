@@ -78,13 +78,17 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { slug, name, version, type, email, planName } = await req.json() as {
+    const { slug, name, version, type, email, planName, workspaceId } = await req.json() as {
       slug?: string;
       name?: string;
       version?: string;
       type?: string;
       email?: string;
       planName?: string;
+      // buildbase workspace this tenant binds to. buildbase auto-creates each
+      // user's workspace on signup, so the caller (the website) passes the
+      // user's currentWorkspace id here. Omit ⇒ single-tenant / self-host.
+      workspaceId?: string;
     };
 
     if (!slug || !/^[a-z][a-z0-9-]*$/.test(slug)) {
@@ -136,28 +140,28 @@ export async function POST(req: NextRequest) {
     let output: string;
 
     if (process.env.NODE_ENV !== "production") {
-      // Local dev: skip Docker entirely, just write the registry entry.
-      // Mirror the buildbase workspace creation in TypeScript so the same
-      // provisioning path is exercised without invoking `ac`. Best-effort:
-      // createBuildbaseWorkspace never throws — on failure the workspace id is
-      // empty and the tenant falls back to single-tenant (no cross-tenant gate).
+      // Local dev: skip Docker entirely, just write the registry entry and store
+      // the caller-provided workspace id (buildbase auto-creates it on signup —
+      // infra never creates one). Empty ⇒ single-tenant.
       const { registerClient, setClientWorkspaceId } = await import("@/lib/registry");
       registerClient(slug, name || slug, CLIENT_TYPE.HOSTED, email);
-      const { createBuildbaseWorkspace } = await import("@/lib/buildbase");
-      const workspaceId = await createBuildbaseWorkspace(name || slug, email);
       if (workspaceId) setClientWorkspaceId(slug, workspaceId);
       output = `[local] Registered "${slug}" in registry (skipped Docker)` +
-        (workspaceId ? ` — buildbase workspace ${workspaceId}` : " — no buildbase workspace (single-tenant)");
+        (workspaceId ? ` — buildbase workspace ${workspaceId}` : " — single-tenant (no workspace id)");
     } else {
-      // Production: run ac create — it provisions the container AND creates +
-      // binds the tenant's buildbase workspace (passing --email), writing the
-      // workspaceId into the registry and TENANT_WORKSPACE_ID into the client
-      // env. `ac` is the single source of truth to avoid double-creating a
-      // workspace. Throws on failure, caught by outer catch → 500.
-      output = createClient(slug, name, version, email);
+      // Production: run ac create — the single source of truth. It provisions the
+      // container and binds the caller-provided --workspace-id (writing it into
+      // the registry and TENANT_WORKSPACE_ID in the client env). Throws on
+      // failure, caught by outer catch → 500.
+      output = createClient(slug, name, version, email, workspaceId);
       if (email) {
         const { setClientEmail } = await import("@/lib/registry");
         setClientEmail(slug, email);
+      }
+      // Belt-and-suspenders: ensure the id is persisted even if provided post-hoc.
+      if (workspaceId) {
+        const { setClientWorkspaceId } = await import("@/lib/registry");
+        setClientWorkspaceId(slug, workspaceId);
       }
     }
 
