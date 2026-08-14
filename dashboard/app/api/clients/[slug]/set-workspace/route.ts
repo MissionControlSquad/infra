@@ -48,6 +48,18 @@ export async function POST(
     return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
   }
 
+  // Bind-once: refuse to REBIND a tenant already bound to a DIFFERENT workspace. This stops the website
+  // migration self-heal from MOVING a tenant when a multi-workspace owner opens a second workspace (the
+  // legacy tenant belongs to the first workspace it was bound to; the second gets a fresh tenant). Same
+  // id = idempotent no-op below. (An operator can still rebind manually via `ac set-workspace`.)
+  const existingWs = (client.workspaceId ?? "").trim();
+  if (existingWs && existingWs !== workspaceId) {
+    return NextResponse.json(
+      { error: "Tenant already bound to a different workspace", boundWorkspaceId: existingWs, slug },
+      { status: 409 },
+    );
+  }
+
   const output: string[] = [];
   const isProd = process.env.NODE_ENV === "production";
 
