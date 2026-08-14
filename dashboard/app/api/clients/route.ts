@@ -123,12 +123,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Guard against duplicate creation: block if any entry already exists for this
-    // (email + type) combination, regardless of provisioning state.
-    // Scoping to type lets a user have separate hosted and self-hosted entries.
-    if (email) {
-      const { findClientByEmailAndType } = await import("@/lib/registry");
-      const existing = findClientByEmailAndType(email, CLIENT_TYPE.HOSTED);
+    // Guard against duplicate creation. workspaceId is the PRIMARY tenant key (one workspace ⇒ one
+    // tenant) — dedup on it so provisioning is idempotent per workspace. Fall back to (email + type)
+    // only when no workspaceId is supplied (legacy/admin). Scoping to type lets a user have separate
+    // hosted and self-hosted entries.
+    if (workspaceId || email) {
+      const { findClientByWorkspaceId, findClientByEmailAndType } = await import("@/lib/registry");
+      const existing = workspaceId
+        ? findClientByWorkspaceId(workspaceId, CLIENT_TYPE.HOSTED)
+        : findClientByEmailAndType(email!, CLIENT_TYPE.HOSTED);
       if (existing) {
         return NextResponse.json(
           { error: "Client already exists", slug: existing.slug, provisioningStatus: existing.entry.provisioningStatus },

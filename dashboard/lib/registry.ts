@@ -250,3 +250,28 @@ export function findClientByEmailAndType(
   }
   return null;
 }
+
+/**
+ * Find a registry entry by buildbase `workspaceId` AND deployment type. This is the PRIMARY tenant key
+ * in the workspace-per-tenant model: one workspace ⇒ one tenant (its own subdomain + bound
+ * TENANT_WORKSPACE_ID). `email` lookups are retained only for admin/legacy use. Empty id ⇒ no match.
+ */
+export function findClientByWorkspaceId(
+  workspaceId: string,
+  type: ClientType
+): { slug: string; entry: ClientEntry } | null {
+  const normalized = workspaceId.trim();
+  if (!normalized) return null;
+  const registry = readRegistry();
+  for (const [slug, entry] of Object.entries(registry)) {
+    if (slug.startsWith("deleted_")) continue;
+    if (
+      entry.workspaceId &&
+      entry.workspaceId.trim() === normalized &&
+      (entry.type ?? CLIENT_TYPE.HOSTED) === type
+    ) {
+      return { slug, entry };
+    }
+  }
+  return null;
+}

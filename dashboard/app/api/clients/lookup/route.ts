@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated, isApiKeyAuthenticated } from "@/lib/auth";
-import { findClientByEmailAndType, setClientActive, setClientFailed } from "@/lib/registry";
+import {
+  findClientByEmailAndType,
+  findClientByWorkspaceId,
+  setClientActive,
+  setClientFailed,
+} from "@/lib/registry";
 import { getContainerStatus } from "@/lib/shell";
 import { getLicense } from "@/lib/license";
 import {
@@ -17,10 +22,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // workspaceId is the PRIMARY tenant key (one workspace ⇒ one tenant). email is retained only as an
+  // admin/legacy fallback lookup.
+  const workspaceId = req.nextUrl.searchParams.get("workspaceId");
   const email = req.nextUrl.searchParams.get("email");
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!email || !EMAIL_RE.test(email)) {
-    return NextResponse.json({ error: "Valid email is required" }, { status: 400 });
+  if (!workspaceId && (!email || !EMAIL_RE.test(email))) {
+    return NextResponse.json({ error: "workspaceId (preferred) or a valid email is required" }, { status: 400 });
   }
 
   // Determine the deployment type the caller cares about from the plan name.
@@ -30,7 +38,9 @@ export async function GET(req: NextRequest) {
   const targetType =
     planName === SELF_HOST_PLAN_NAME ? CLIENT_TYPE.SELF_HOSTED : CLIENT_TYPE.HOSTED;
 
-  const result = findClientByEmailAndType(email, targetType);
+  const result = workspaceId
+    ? findClientByWorkspaceId(workspaceId, targetType)
+    : findClientByEmailAndType(email!, targetType);
   if (!result) {
     return NextResponse.json({ found: false });
   }
