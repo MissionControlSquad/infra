@@ -11,17 +11,18 @@ vi.mock("@/lib/auth", () => ({
   isApiKeyAuthenticated: vi.fn(() => true), // API-key path authenticated
 }));
 
-const setClientWorkspaceId = vi.fn();
+const setClientWorkspaceId = vi.fn((_slug: string, _workspaceId: string) => {});
 vi.mock("@/lib/registry", () => ({
   getClient: vi.fn(() => clientFixture),
-  setClientWorkspaceId: (...a: unknown[]) => setClientWorkspaceId(...a),
+  setClientWorkspaceId: (slug: string, workspaceId: string) =>
+    setClientWorkspaceId(slug, workspaceId),
 }));
 
-const setWorkspace = vi.fn(() => "ok");
-const addDomain = vi.fn(() => "ok");
+const setWorkspace = vi.fn((_slug: string, _workspaceId: string) => "ok");
+const addDomain = vi.fn((_slug: string, _domain: string) => "ok");
 vi.mock("@/lib/shell", () => ({
-  setWorkspace: (...a: unknown[]) => setWorkspace(...a),
-  addDomain: (...a: unknown[]) => addDomain(...a),
+  setWorkspace: (slug: string, workspaceId: string) => setWorkspace(slug, workspaceId),
+  addDomain: (slug: string, domain: string) => addDomain(slug, domain),
 }));
 
 import { POST } from "@/app/api/clients/[slug]/set-workspace/route";
