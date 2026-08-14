@@ -62,6 +62,13 @@ export function setWorkspace(slug: string, workspaceId: string): string {
   return run(`${AC_PATH} set-workspace ${slug} --workspace-id ${safe}`, 120_000);
 }
 
+/** Add a Traefik Host alias (custom domain) to an existing tenant via `ac add-domain`. */
+export function addDomain(slug: string, domain: string): string {
+  const safe = /^[a-z0-9.-]+$/.test(domain) ? domain : "";
+  if (!safe) throw new Error(`Invalid domain: "${domain}"`);
+  return run(`${AC_PATH} add-domain ${slug} ${safe}`, 60_000);
+}
+
 export function deleteClient(slug: string): string {
   return run(`${AC_PATH} delete ${slug} --confirm`, 30_000);
 }
