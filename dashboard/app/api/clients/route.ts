@@ -123,15 +123,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Guard against duplicate creation. workspaceId is the PRIMARY tenant key (one workspace ⇒ one
-    // tenant) — dedup on it so provisioning is idempotent per workspace. Fall back to (email + type)
-    // only when no workspaceId is supplied (legacy/admin). Scoping to type lets a user have separate
-    // hosted and self-hosted entries.
-    if (workspaceId || email) {
-      const { findClientByWorkspaceId, findClientByEmailAndType } = await import("@/lib/registry");
-      const existing = workspaceId
-        ? findClientByWorkspaceId(workspaceId, CLIENT_TYPE.HOSTED)
-        : findClientByEmailAndType(email!, CLIENT_TYPE.HOSTED);
+    // Go-forward: hosted tenants are keyed by buildbase workspaceId (one workspace ⇒ one tenant); we no
+    // longer dedup or key tenants by email. Dedup on workspaceId when the caller supplies one (the
+    // website launcher always does → idempotent per workspace). An admin manual create without a
+    // workspaceId still works — it just isn't workspace-bound yet (bind later via set-workspace). Email
+    // lookup survives ONLY in the lookup route, for the migration self-heal that binds pre-existing
+    // email-keyed tenants (see clients/lookup).
+    if (workspaceId) {
+      const { findClientByWorkspaceId } = await import("@/lib/registry");
+      const existing = findClientByWorkspaceId(workspaceId, CLIENT_TYPE.HOSTED);
       if (existing) {
         return NextResponse.json(
           { error: "Client already exists", slug: existing.slug, provisioningStatus: existing.entry.provisioningStatus },
