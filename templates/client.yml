@@ -1,5 +1,6 @@
 # Template: per-client Docker Compose override
-# Placeholders: __SLUG__, __AUTH_SECRET__, __CRON_SECRET__, __IMAGE__, __LICENSE_REFRESH_TOKEN__
+# Placeholders: __SLUG__, __AUTH_SECRET__, __CRON_SECRET__, __IMAGE__,
+#               __LICENSE_REFRESH_TOKEN__, __WORKSPACE_ID__
 # Shared env vars come from infra/.env
 
 volumes:
@@ -30,6 +31,26 @@ services:
       - NOTIFICATION_FROM_EMAIL=${NOTIFICATION_FROM_EMAIL}
       - LICENSE_SERVER_URL=http://dashboard:4000
       - LICENSE_REFRESH_TOKEN=__LICENSE_REFRESH_TOKEN__
+      # ── buildbase (SaaSOS) platform binding ──────────────────────────
+      # Same platform values for every tenant (from infra/.env). These wire the
+      # tenant container to the shared buildbase server for human auth / SSO.
+      - NEXT_PUBLIC_SAAS_SERVER_URL=${SAAS_SERVER_URL}
+      - SAAS_SERVER_URL=${SAAS_SERVER_URL}
+      - NEXT_PUBLIC_SAAS_ORG_ID=${SAAS_ORG_ID}
+      - SAAS_ORG_ID=${SAAS_ORG_ID}
+      - NEXT_PUBLIC_SAAS_CLIENT_ID=${SAAS_CLIENT_ID}
+      - SAAS_CLIENT_ID=${SAAS_CLIENT_ID}
+      - SAAS_CLIENT_SECRET=${SAAS_CLIENT_SECRET}
+      # Public URL of THIS tenant (used by the buildbase auth callback + SSO).
+      - NEXT_PUBLIC_APP_URL=https://__SLUG__.app.agentcenter.cloud
+      # Shared parent-domain cookie enables cross-subdomain SSO (monorepo bridge).
+      - AUTH_COOKIE_DOMAIN=${AUTH_COOKIE_DOMAIN:-.agentcenter.cloud}
+      # Per-tenant buildbase workspace this container is bound to (id passed in by
+      # the caller at provision time — buildbase auto-creates it on user signup).
+      # The monorepo bridge enforces membership of this workspace. Empty ⇒
+      # single-tenant (no cross-tenant gate); set later via
+      # `ac set-workspace __SLUG__ --workspace-id <id>`.
+      - TENANT_WORKSPACE_ID=__WORKSPACE_ID__
     volumes:
       - app_data___SLUG__:/app/data
     # Disable Dockerfile healthcheck — Traefik routes as soon as the container starts

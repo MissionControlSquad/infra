@@ -25,6 +25,13 @@ export interface ClientEntry {
   /** Explicit provisioning state so callers know whether creation is still in progress. */
   provisioningStatus?: ProvisioningStatus;
   provisioningAttempts?: number;
+  /**
+   * The buildbase workspace this tenant's container is bound to (id passed in by
+   * the caller at provision time). Empty/undefined ⇒ the tenant runs
+   * single-tenant (no cross-tenant gate); set later via
+   * `ac set-workspace <slug> --workspace-id <id>`.
+   */
+  workspaceId?: string;
 }
 
 export type Registry = Record<string, ClientEntry>;
@@ -140,6 +147,22 @@ export function setClientEmail(slug: string, email: string): void {
   }
 }
 
+/**
+ * Persist the buildbase workspace id for a tenant so `ac`/compose regeneration
+ * can inject it as TENANT_WORKSPACE_ID. Non-fatal on failure.
+ */
+export function setClientWorkspaceId(slug: string, workspaceId: string): void {
+  try {
+    const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
+    const registry = JSON.parse(raw) as Registry;
+    if (!registry[slug]) return;
+    registry[slug].workspaceId = workspaceId;
+    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  } catch {
+    // non-fatal — the container falls back to single-tenant until re-bound
+  }
+}
+
 export function setClientActive(slug: string): void {
   try {
     const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
@@ -220,6 +243,31 @@ export function findClientByEmailAndType(
     if (
       entry.email &&
       entry.email.toLowerCase().trim() === normalized &&
+      (entry.type ?? CLIENT_TYPE.HOSTED) === type
+    ) {
+      return { slug, entry };
+    }
+  }
+  return null;
+}
+
+/**
+ * Find a registry entry by buildbase `workspaceId` AND deployment type. This is the PRIMARY tenant key
+ * in the workspace-per-tenant model: one workspace ⇒ one tenant (its own subdomain + bound
+ * TENANT_WORKSPACE_ID). `email` lookups are retained only for admin/legacy use. Empty id ⇒ no match.
+ */
+export function findClientByWorkspaceId(
+  workspaceId: string,
+  type: ClientType
+): { slug: string; entry: ClientEntry } | null {
+  const normalized = workspaceId.trim();
+  if (!normalized) return null;
+  const registry = readRegistry();
+  for (const [slug, entry] of Object.entries(registry)) {
+    if (slug.startsWith("deleted_")) continue;
+    if (
+      entry.workspaceId &&
+      entry.workspaceId.trim() === normalized &&
       (entry.type ?? CLIENT_TYPE.HOSTED) === type
     ) {
       return { slug, entry };

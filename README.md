@@ -80,6 +80,58 @@ POST /api/clients
 ```
 Returns `{ licenseKey: "<refresh_token>" }` immediately — no container wait.
 
+### buildbase Workspace-per-Tenant
+
+Each hosted tenant is bound to a **buildbase (SaaSOS) workspace**. The monorepo
+app (running inside the tenant container) uses this to enforce that a human
+logging in is a member of *this* tenant's workspace — the cross-tenant gate.
+
+**Infra does NOT create buildbase workspaces.** buildbase auto-creates each
+user's workspace on signup (the org runs in `personal` mode), and the website
+already has it via `useSaaSWorkspaces().currentWorkspace`. So the workspace id is
+**passed in by the caller** at provision time; infra just receives and binds it.
+
+**Provisioning step** (`ac create` / `POST /api/clients`):
+
+1. The caller (the website) supplies the signed-in user's `workspaceId` — via
+   `ac create <slug> --workspace-id <id>` or the `POST /api/clients` request body.
+2. The provided id is stored in `clients/registry.json` (`.<slug>.workspaceId`)
+   and substituted into the client container env as `TENANT_WORKSPACE_ID`.
+3. The container also receives the shared platform buildbase config
+   (`SAAS_SERVER_URL`, `SAAS_ORG_ID`, `SAAS_CLIENT_ID`, `SAAS_CLIENT_SECRET`),
+   its public URL (`NEXT_PUBLIC_APP_URL`), and `AUTH_COOKIE_DOMAIN` (parent-domain
+   cookie for cross-subdomain SSO) — these are what the tenant dashboard needs to
+   run the buildbase SSO.
+
+**No service credential and no org reconfiguration are required.** If no
+`workspaceId` is provided (e.g. self-host), it's left empty and the tenant runs
+**single-tenant** (no cross-tenant gate — the monorepo bridge treats it as a
+single-tenant instance). Set or change it later on an existing tenant:
+
+```bash
+./ac set-workspace <slug> --workspace-id <id>
+```
+
+`set-workspace` stores the id, regenerates the compose file (injecting
+`TENANT_WORKSPACE_ID`), and restarts the container.
+
+### Infra Environment Variables (workspace-per-tenant)
+
+Add to `infra/.env` (see `.env.example`). These are the platform buildbase
+values injected into every tenant container so the tenant dashboard can run the
+SSO — no create-workspace / service credential is needed:
+
+| Variable | Description |
+|---|---|
+| `SAAS_SERVER_URL` | Platform buildbase server base URL (same for all tenants). |
+| `SAAS_ORG_ID` | Platform buildbase org id (same for all tenants). |
+| `SAAS_CLIENT_ID` | buildbase OAuth client id. |
+| `SAAS_CLIENT_SECRET` | buildbase OAuth client secret (server-only). |
+| `AUTH_COOKIE_DOMAIN` | Parent-domain cookie for cross-subdomain SSO (default `.agentcenter.cloud`). |
+
+The per-tenant `workspaceId` is **not** an env var — it is passed in per tenant
+at provision time (see above).
+
 ### Lookup by Email
 
 Used by the website to check if a tenant already exists for a user:

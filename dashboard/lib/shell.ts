@@ -37,10 +37,36 @@ function run(command: string, timeout = 30_000, env?: Record<string, string>): s
   }
 }
 
-export function createClient(slug: string, name?: string, version?: string): string {
+export function createClient(
+  slug: string,
+  name?: string,
+  version?: string,
+  email?: string,
+  workspaceId?: string
+): string {
   const nameFlag = name ? ` --name "${name.replace(/"/g, '\\"')}"` : "";
   const versionFlag = version ? ` --version ${version}` : "";
-  return run(`${AC_PATH} create ${slug}${nameFlag}${versionFlag}`, 120_000);
+  // Basic guard against shell metacharacters for values interpolated into the
+  // command line. The owner email + the caller-provided buildbase workspace id
+  // (which `ac` injects as TENANT_WORKSPACE_ID) are passed through as flags.
+  const shellSafe = (v?: string) => (v && /^[^\s"'`$();|&<>]+$/.test(v) ? v : "");
+  const emailFlag = shellSafe(email) ? ` --email ${shellSafe(email)}` : "";
+  const workspaceFlag = shellSafe(workspaceId) ? ` --workspace-id ${shellSafe(workspaceId)}` : "";
+  return run(`${AC_PATH} create ${slug}${nameFlag}${versionFlag}${emailFlag}${workspaceFlag}`, 120_000);
+}
+
+/** Set/change the buildbase workspace id on an existing tenant via `ac`. */
+export function setWorkspace(slug: string, workspaceId: string): string {
+  const safe = /^[^\s"'`$();|&<>]+$/.test(workspaceId) ? workspaceId : "";
+  if (!safe) throw new Error(`Invalid workspace id: "${workspaceId}"`);
+  return run(`${AC_PATH} set-workspace ${slug} --workspace-id ${safe}`, 120_000);
+}
+
+/** Add a Traefik Host alias (custom domain) to an existing tenant via `ac add-domain`. */
+export function addDomain(slug: string, domain: string): string {
+  const safe = /^[a-z0-9.-]+$/.test(domain) ? domain : "";
+  if (!safe) throw new Error(`Invalid domain: "${domain}"`);
+  return run(`${AC_PATH} add-domain ${slug} ${safe}`, 60_000);
 }
 
 export function deleteClient(slug: string): string {

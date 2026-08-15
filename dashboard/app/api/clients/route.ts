@@ -78,13 +78,17 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { slug, name, version, type, email, planName } = await req.json() as {
+    const { slug, name, version, type, email, planName, workspaceId } = await req.json() as {
       slug?: string;
       name?: string;
       version?: string;
       type?: string;
       email?: string;
       planName?: string;
+      // buildbase workspace this tenant binds to. buildbase auto-creates each
+      // user's workspace on signup, so the caller (the website) passes the
+      // user's currentWorkspace id here. Omit ⇒ single-tenant / self-host.
+      workspaceId?: string;
     };
 
     if (!slug || !/^[a-z][a-z0-9-]*$/.test(slug)) {
@@ -119,12 +123,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Guard against duplicate creation: block if any entry already exists for this
-    // (email + type) combination, regardless of provisioning state.
-    // Scoping to type lets a user have separate hosted and self-hosted entries.
-    if (email) {
-      const { findClientByEmailAndType } = await import("@/lib/registry");
-      const existing = findClientByEmailAndType(email, CLIENT_TYPE.HOSTED);
+    // Go-forward: hosted tenants are keyed by buildbase workspaceId (one workspace ⇒ one tenant); we no
+    // longer dedup or key tenants by email. Dedup on workspaceId when the caller supplies one (the
+    // website launcher always does → idempotent per workspace). An admin manual create without a
+    // workspaceId still works — it just isn't workspace-bound yet (bind later via set-workspace). Email
+    // lookup survives ONLY in the lookup route, for the migration self-heal that binds pre-existing
+    // email-keyed tenants (see clients/lookup).
+    if (workspaceId) {
+      const { findClientByWorkspaceId } = await import("@/lib/registry");
+      const existing = findClientByWorkspaceId(workspaceId, CLIENT_TYPE.HOSTED);
       if (existing) {
         return NextResponse.json(
           { error: "Client already exists", slug: existing.slug, provisioningStatus: existing.entry.provisioningStatus },
@@ -136,16 +143,28 @@ export async function POST(req: NextRequest) {
     let output: string;
 
     if (process.env.NODE_ENV !== "production") {
-      // Local dev: skip Docker entirely, just write the registry entry
-      const { registerClient } = await import("@/lib/registry");
+      // Local dev: skip Docker entirely, just write the registry entry and store
+      // the caller-provided workspace id (buildbase auto-creates it on signup —
+      // infra never creates one). Empty ⇒ single-tenant.
+      const { registerClient, setClientWorkspaceId } = await import("@/lib/registry");
       registerClient(slug, name || slug, CLIENT_TYPE.HOSTED, email);
-      output = `[local] Registered "${slug}" in registry (skipped Docker)`;
+      if (workspaceId) setClientWorkspaceId(slug, workspaceId);
+      output = `[local] Registered "${slug}" in registry (skipped Docker)` +
+        (workspaceId ? ` — buildbase workspace ${workspaceId}` : " — single-tenant (no workspace id)");
     } else {
-      // Production: run ac create — throws on failure, caught by outer catch → 500
-      output = createClient(slug, name, version);
+      // Production: run ac create — the single source of truth. It provisions the
+      // container and binds the caller-provided --workspace-id (writing it into
+      // the registry and TENANT_WORKSPACE_ID in the client env). Throws on
+      // failure, caught by outer catch → 500.
+      output = createClient(slug, name, version, email, workspaceId);
       if (email) {
         const { setClientEmail } = await import("@/lib/registry");
         setClientEmail(slug, email);
+      }
+      // Belt-and-suspenders: ensure the id is persisted even if provided post-hoc.
+      if (workspaceId) {
+        const { setClientWorkspaceId } = await import("@/lib/registry");
+        setClientWorkspaceId(slug, workspaceId);
       }
     }
 

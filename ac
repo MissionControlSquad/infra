@@ -84,7 +84,7 @@ insert_domain_labels() {
 # ── Commands ─────────────────────────────────────────────────────────
 
 cmd_create() {
-  local slug name version="latest"
+  local slug name version="latest" email="" workspace_id=""
   slug=$(require_slug "${1:-}")
   shift
   name="$slug"
@@ -93,6 +93,11 @@ cmd_create() {
     case "$1" in
       --name) name="$2"; shift 2 ;;
       --version) version="$2"; shift 2 ;;
+      --email) email="$2"; shift 2 ;;
+      # The buildbase workspace this tenant binds to. buildbase auto-creates each
+      # user's workspace on signup, so infra RECEIVES the id from the caller (the
+      # website passes the user's currentWorkspace). Empty ⇒ single-tenant.
+      --workspace-id) workspace_id="$2"; shift 2 ;;
       *) die "Unknown option: $1" ;;
     esac
   done
@@ -132,6 +137,14 @@ cmd_create() {
     echo "  License issued (starter plan)"
   fi
 
+  # 4b. Bind the tenant to its buildbase workspace (id passed in by the caller).
+  #     Empty ⇒ single-tenant (self-host) — that's fine.
+  if [ -n "$workspace_id" ]; then
+    echo "  Binding buildbase workspace: $workspace_id"
+  else
+    echo "  No workspace id provided — tenant runs single-tenant."
+  fi
+
   # 5. Generate compose file from template
   echo "  Generating compose file..."
   sed -e "s/__SLUG__/$slug/g" \
@@ -139,6 +152,7 @@ cmd_create() {
       -e "s/__CRON_SECRET__/$cron_secret/g" \
       -e "s|__IMAGE__|$image|g" \
       -e "s|__LICENSE_REFRESH_TOKEN__|$license_refresh_token|g" \
+      -e "s|__WORKSPACE_ID__|$workspace_id|g" \
       "$TEMPLATE" > "$CLIENTS_DIR/$slug.yml"
 
   # 6. Update registry
@@ -152,7 +166,10 @@ cmd_create() {
      --arg ver "$version" \
      --arg lic "$license_refresh_token" \
      --arg plan "starter" \
-     '.[$slug] = {name: $name, type: "hosted", provisioningStatus: "provisioning", provisioningAttempts: 1, authSecret: $auth, cronSecret: $cron, licenseRefreshToken: $lic, createdAt: $date, domains: [], version: $ver, plan: $plan}' \
+     --arg wsid "$workspace_id" \
+     --arg email "$email" \
+     '.[$slug] = {name: $name, type: "hosted", provisioningStatus: "provisioning", provisioningAttempts: 1, authSecret: $auth, cronSecret: $cron, licenseRefreshToken: $lic, createdAt: $date, domains: [], version: $ver, plan: $plan, workspaceId: $wsid}
+      + (if $email == "" then {} else {email: $email} end)' \
      "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
 
   # 7. Start the container
@@ -171,6 +188,45 @@ cmd_create() {
   echo "  URL: https://$slug.app.agentcenter.cloud"
   echo "  DB:  client_$slug"
   echo "  Ver: $version"
+}
+
+# Set the buildbase workspace id on an EXISTING tenant + regenerate the compose.
+# buildbase auto-creates each user's workspace on signup; infra just RECEIVES the
+# id. Use this to bind a tenant that was provisioned without one, or to change it.
+cmd_set_workspace() {
+  local slug workspace_id=""
+  slug=$(require_slug "${1:-}")
+  shift || true
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --workspace-id) workspace_id="$2"; shift 2 ;;
+      *) die "Unknown option: $1" ;;
+    esac
+  done
+
+  [ -f "$CLIENTS_DIR/$slug.yml" ] || die "Client '$slug' not found"
+  [ -n "$workspace_id" ] || die "Usage: $0 set-workspace <slug> --workspace-id <id>"
+
+  bold "Setting buildbase workspace for '$slug' → $workspace_id"
+
+  # Persist the workspace id in the registry.
+  local tmp
+  tmp=$(mktemp)
+  jq --arg slug "$slug" --arg wsid "$workspace_id" \
+     '.[$slug].workspaceId = $wsid' \
+     "$REGISTRY" > "$tmp" && cat "$tmp" > "$REGISTRY" && rm -f "$tmp"
+
+  # Regenerate compose (substitutes __WORKSPACE_ID__ from the registry) + restart.
+  local version image
+  version=$(jq -r ".\"$slug\".version // \"latest\"" "$REGISTRY")
+  image=$(resolve_image "$version")
+  echo "  Regenerating compose file..."
+  regenerate_compose "$slug" "$image"
+  echo "  Restarting container..."
+  compose_client "$slug" up -d "app-$slug"
+
+  green "Workspace set for '$slug': $workspace_id"
 }
 
 cmd_delete() {
@@ -523,6 +579,10 @@ regenerate_compose() {
 
   license_refresh_token=$(jq -r ".\"$slug\".licenseRefreshToken // \"__PENDING__\"" "$REGISTRY")
 
+  # Preserve the tenant's buildbase workspace binding across regenerations.
+  local workspace_id
+  workspace_id=$(jq -r ".\"$slug\".workspaceId // \"\"" "$REGISTRY")
+
   # Auto-issue license for hosted clients that don't have one yet
   if [ "$license_refresh_token" = "__PENDING__" ] || [ -z "$license_refresh_token" ]; then
     local name
@@ -546,6 +606,7 @@ regenerate_compose() {
       -e "s/__CRON_SECRET__/$cron_secret/g" \
       -e "s|__IMAGE__|$image|g" \
       -e "s|__LICENSE_REFRESH_TOKEN__|$license_refresh_token|g" \
+      -e "s|__WORKSPACE_ID__|$workspace_id|g" \
       "$TEMPLATE" > "$CLIENTS_DIR/$slug.yml"
 
   # Re-apply custom domains if any — inserted into the labels section
@@ -984,8 +1045,14 @@ AgentCenter.Cloud — Per-Client Deployment CLI
 Usage: ./ac <command> [args]
 
 Commands:
-  create <slug> [--name "Name"] [--version <tag>]
-                                  Provision a new client
+  create <slug> [--name "Name"] [--version <tag>] [--email <addr>]
+                [--workspace-id <id>]
+                                  Provision a new client. Pass --workspace-id to
+                                    bind the tenant to the caller's buildbase
+                                    workspace (omit ⇒ single-tenant / self-host)
+  set-workspace <slug> --workspace-id <id>
+                                  Set/change the buildbase workspace id on an
+                                    existing tenant + regenerate its compose
   delete <slug> --confirm         Remove a client and its database
   list                            List all clients and their status
   logs <slug>                     Tail logs for a client
@@ -1017,7 +1084,8 @@ Commands:
   help                            Show this help message
 
 Examples:
-  ./ac create acme --name "Acme Corp" --version 1.2.0
+  ./ac create acme --name "Acme Corp" --version 1.2.0 --workspace-id ws_abc123
+  ./ac set-workspace acme --workspace-id ws_abc123
   ./ac list
   ./ac logs acme
   ./ac update --all
@@ -1038,6 +1106,7 @@ shift || true
 
 case "$COMMAND" in
   create)        cmd_create "$@" ;;
+  set-workspace) cmd_set_workspace "$@" ;;
   delete)        cmd_delete "$@" ;;
   list)          cmd_list ;;
   logs)          cmd_logs "$@" ;;

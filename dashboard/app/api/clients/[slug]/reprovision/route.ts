@@ -43,7 +43,12 @@ export async function POST(
   // In local dev, resetting the status is enough (no Docker).
   if (process.env.NODE_ENV === "production") {
     try {
-      createClient(slug, client.name, client.version);
+      // Preserve the tenant's identity on retry: `ac create` unconditionally rewrites the registry's
+      // workspaceId (and substitutes __WORKSPACE_ID__ into the container env) from the --workspace-id
+      // flag, so omitting it would WIPE the buildbase workspace binding and drop the tenant to
+      // single-tenant mode. Pass the existing email + workspaceId back through so the rebuild keeps the
+      // exact same binding it had before it failed.
+      createClient(slug, client.name, client.version, client.email, client.workspaceId);
     } catch {
       // Non-fatal — status is already reset to "provisioning", failure detection
       // will flip it to "failed" again after the next timeout.
