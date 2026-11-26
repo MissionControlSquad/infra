@@ -59,6 +59,10 @@ All endpoints require either a valid session cookie (admin UI) or `X-API-Key: <A
 
 #### Licenses
 
+> The self-hosted AgentCenter app no longer calls these endpoints: its license check was removed in
+> [MissionControlSquad/monorepo#165](https://github.com/MissionControlSquad/monorepo/pull/165). They're
+> documented here for reference only.
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/license/public-key` | Get the RSA public key (used by clients to verify tokens) |
