@@ -6,3 +6,5 @@ dashboard/node_modules
 dashboard/dist
 keys/
 data/
+# Build artefacts
+*.tsbuildinfo
