@@ -25,7 +25,7 @@ services:
 
   # ── Database (shared, one DB per client) ─────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     command: postgres -c max_connections=400 -c shared_buffers=256MB
     environment:
@@ -89,7 +89,7 @@ services:
 
   # ── Cron (shared, hits auto-sleep for all clients) ───────────────
   cron:
-    image: alpine:3.20
+    image: alpine:3.24
     restart: unless-stopped
     entrypoint: /bin/sh
     command:
