@@ -1,5 +1,15 @@
 # AgentCenter Infra
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/MissionControlSquad/infra/actions/workflows/ci.yml/badge.svg)](https://github.com/MissionControlSquad/infra/actions/workflows/ci.yml)
+
+> [!IMPORTANT]
+> **The hosted AgentCenter service has been shut down.** This repository is the infrastructure that ran it,
+> published under the [MIT License](LICENSE) for reference and for anyone who wants to run a similar
+> multi-tenant setup. Nothing here is deployed by the maintainers any more, and the deploy workflow only runs
+> when started by hand. Hostnames such as `*.agentcenter.cloud` in the code and config are historical and must be
+> replaced with your own domain.
+
 Infrastructure and admin dashboard for AgentCenter. Manages tenant provisioning, license issuance, and container lifecycle via Docker.
 
 ## Overview
@@ -166,6 +176,16 @@ The dashboard is accessible at the domain configured in `docker-compose.yml` via
 | `PROVISIONING_STATUS.*` | `"provisioning" \| "active" \| "failed"` | Tenant lifecycle states |
 | `TENANT_MAX_RETRY_ATTEMPTS` | `3` | Max provisioning retries before requiring manual intervention |
 
+## Security
+
+Report vulnerabilities privately through [GitHub's private vulnerability reporting](https://github.com/MissionControlSquad/infra/security/advisories/new). See [SECURITY.md](SECURITY.md).
+
+Never commit `.env`, `keys/` or `data/`: they hold the license-signing private key and runtime state, and are git-ignored.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
-Proprietary. © Jagodana LLC.
+[MIT](LICENSE) © 2026 Jagodana LLC
